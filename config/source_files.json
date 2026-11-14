@@ -1,0 +1,30 @@
+{
+  "line_files": {
+    "传输专线.xlsx": {
+      "source_type": "传输专线",
+      "detail_sheet_hint": "Sheet0"
+    },
+    "多媒体语音专线.xlsx": {
+      "source_type": "多媒体语音专线",
+      "detail_sheet_hint": "Sheet0"
+    },
+    "互联网专线.xlsx": {
+      "source_type": "互联网专线",
+      "detail_sheet_hint": "Sheet0"
+    },
+    "商务快线.xlsx": {
+      "source_type": "商务快线",
+      "detail_sheet_hint": "Sheet0"
+    },
+    "IPVPN专线.xlsx": {
+      "source_type": "IPVPN专线",
+      "detail_sheet_hint": "Sheet0"
+    }
+  },
+  "onu_files": {
+    "ONU台账.xlsx": {
+      "source_type": "ONU台账",
+      "detail_sheet_hint": "Sheet1"
+    }
+  }
+}

@@ -1,0 +1,70 @@
+name: Community checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: node --check web/app.js && node tests/frontend.cjs
+      - run: bash -n deploy.sh
+      - run: python scripts/check_release.py --tracked
+      - run: python scripts/build_release.py --version ci
+  mysql:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mysql: ['8.0', '8.4']
+    services:
+      mysql:
+        image: mysql:${{ matrix.mysql }}
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-not-production
+          MYSQL_DATABASE: dedicated_line_test
+          MYSQL_USER: community_test
+          MYSQL_PASSWORD: ci-only-not-production
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    env:
+      MYSQL_TEST_DATABASE_URL: mysql+pymysql://community_test:ci-only-not-production@127.0.0.1:3306/dedicated_line_test?charset=utf8mb4
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - run: pip install -r requirements-dev.txt
+      - run: python tests/mysql_smoke.py
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pip_audit
