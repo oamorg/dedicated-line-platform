@@ -78,6 +78,12 @@ def main():
         return conn.execute(text(f'SELECT COUNT(*) FROM {table} WHERE product_number=:marker'), {'marker': marker}).scalar_one()
 
     try:
+        run_script('build_release.py', '--version', 'mysql-check')
+        run_script('init_db.py', str(ROOT / 'dist/dedicated_line_empty.sql'))
+        with engine.connect() as conn:
+            for table in ['auth_users', 'auth_user_roles', 'auth_sessions', 'admin_operation_logs',
+                          'customer_line_records', 'onu_inventory', 'import_batches', 'import_errors']:
+                assert conn.execute(text(f'SELECT COUNT(*) FROM {table}')).scalar_one() == 0
         for _ in range(2):
             run_script('init_db.py')
         with engine.begin() as conn:
@@ -138,7 +144,7 @@ def main():
                     conn.execute(text('DELETE FROM import_batches WHERE batch_name=:name'), {'name': marker + suffix})
         app_engine.dispose()
         engine.dispose()
-    print('MySQL: migrations, dry-run/import/deduplication, login/query/detail/export/roles/logout passed')
+    print('MySQL: release SQL restore, migrations, dry-run/import/deduplication, login/query/detail/export/roles/logout passed')
 
 
 if __name__ == '__main__':

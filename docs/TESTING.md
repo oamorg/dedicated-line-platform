@@ -24,7 +24,7 @@ python scripts/check_release.py
 | `test_community.py` | 鉴权、viewer 权限、SN 参数绑定、IPVPN 映射、完整原始数据、改密撤销会话、导入日志路径 | 否，部分数据库操作使用 SQLite / Mock |
 | `test_release_workflow.py` | 测试数据库保护、首次部署停止于配置步骤、包内外哈希、敏感文件排除、文档相对链接 | 否 |
 | `frontend.cjs` | 虚构样例、CSV 内容转义、表头顺序、预览隔离 | 否，Node VM，不是浏览器视觉测试 |
-| `mysql_smoke.py` | 重复初始化、无默认账号、Excel 演练/导入/去重、三类角色、详情、导出、退出登录 | 是，新建本机空测试库 |
+| `mysql_smoke.py` | 发布空库 SQL 恢复、重复初始化、无默认账号、Excel 演练/导入/去重、三类角色、详情、导出、退出登录 | 是，新建本机空测试库 |
 | `pip-audit` | 当前安装依赖的已知漏洞查询 | 否，需要互联网 |
 
 ## MySQL 集成测试
@@ -47,7 +47,7 @@ python tests/mysql_smoke.py
 unset MYSQL_TEST_DATABASE_URL
 ```
 
-脚本临时生成虚构 Excel，演练后验证无业务行，正式导入及再次导入后验证每类记录只有一条，并通过真实 API 检查 viewer/exporter/admin 权限。测试结束清除本轮合成记录和用户，保留表结构以便排错；下次运行应重新创建空的专用测试库。失败的表结构初始化也可能留下表，不能把失败当作已回滚。
+脚本先构建发布产物并恢复 `dedicated_line_empty.sql`，检查账号、会话、业务、批次与日志表均为空，再重复执行迁移。随后临时生成虚构 Excel，演练后验证无业务行，正式导入及再次导入后验证每类记录只有一条，并通过真实 API 检查 viewer/exporter/admin 权限。测试结束清除本轮合成记录和用户，保留表结构以便排错；下次运行应重新创建空的专用测试库。失败的表结构初始化也可能留下表，不能把失败当作已回滚。
 
 GitHub CI 为 MySQL 8.0/8.4 各启一个临时容器，不需要配置生产 Secrets。CI 数据库密码仅适用于临时测试容器。
 
@@ -57,7 +57,7 @@ GitHub CI 为 MySQL 8.0/8.4 各启一个临时容器，不需要配置生产 Sec
 python -m pip check
 python -m pip_audit
 python scripts/check_release.py
-python scripts/build_release.py --version 20261115-r2
+python scripts/build_release.py --version 0.1.0
 cd dist
 shasum -a 256 -c SHA256SUMS.txt
 ```

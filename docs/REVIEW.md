@@ -16,7 +16,7 @@
 | P2 | README 许可链接是本机绝对路径；整包内清单引用旧哈希和自身 | 改相对链接，内外分层校验，源码白名单构建并剔除目录元数据 |
 | P2 | IPVPN 同时含两组 IP 字段时优先级不符合业务约定 | 该来源优先互联 IP；其余来源维持用户/网关地址优先；回归测试覆盖 |
 
-升级参考：[cryptography 官方变更记录](https://cryptography.io/en/latest/changelog/)。许可证继续为 MIT，版权主体 hjie。
+升级参考：[cryptography 官方变更记录](https://cryptography.io/en/latest/changelog/)。许可证继续为 MIT，版权声明统一为 `Copyright (c) 2026 oamorg`。
 
 ## 本地完成验证
 

@@ -1,5 +1,20 @@
 # 社区版部署指南
 
+## 下载与校验
+
+在 [v0.1.0 发布页](https://github.com/oamorg/dedicated-line-platform/releases/tag/v0.1.0) 下载 `dedicated-line-community-release-0.1.0.tar.gz` 和 `SHA256SUMS.txt`，放到同一目录。发布页的 GitHub 自动生成 Source code 下载项仅含源码，不包含额外的空库 SQL 和整包文档目录；首次部署建议使用社区整包附件。
+
+```bash
+# 只下载整包时，选择清单中的对应条目校验。
+grep '  dedicated-line-community-release-0.1.0.tar.gz$' SHA256SUMS.txt | sha256sum -c -
+mkdir dedicated-line-release-0.1.0
+tar -xzf dedicated-line-community-release-0.1.0.tar.gz -C dedicated-line-release-0.1.0
+cd dedicated-line-release-0.1.0
+sha256sum -c SHA256SUMS.txt
+```
+
+macOS 将 `sha256sum` 替换为 `shasum -a 256`。若下载了全部独立附件，可在解压前直接校验整份外部清单。解压后目录包含源码包、`db/dedicated_line_empty.sql`、`docs/`、LICENSE 和包内校验清单。下面 `/path/to/` 请替换为附件或解压文件的实际目录。
+
 ## 环境
 
 目标环境为 Python 3.11–3.14、MySQL 8.0 或 8.4，验证状态见 [测试说明](TESTING.md)。示例生产环境为 Ubuntu 24.04，起步资源 2 核 / 4GB，磁盘按数据及备份量规划。macOS 可运行 Python 服务，但以下 systemd 部分仅适用于 Linux。开发测试另需 Node.js 24，运行服务不需要。
@@ -10,7 +25,7 @@ sudo apt install -y python3-venv python3-pip mysql-server nginx
 id dedicated-line >/dev/null 2>&1 || sudo useradd --system --user-group --home /opt/dedicated-line --shell /usr/sbin/nologin dedicated-line
 # 以下为首次空环境部署，让当前维护用户先拥有源码安装目录。
 sudo install -d -o "$(id -un)" -g "$(id -gn)" /opt/dedicated-line
-tar -xzf /path/to/dedicated-line-community-source-20261115-r2.tar.gz --strip-components=1 -C /opt/dedicated-line
+tar -xzf /path/to/dedicated-line-community-source-0.1.0.tar.gz --strip-components=1 -C /opt/dedicated-line
 ```
 
 ## 数据库与配置

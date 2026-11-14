@@ -20,6 +20,8 @@
 
 ## 快速部署
 
+在 [GitHub Releases](https://github.com/oamorg/dedicated-line-platform/releases) 下载 `dedicated-line-community-release-0.1.0.tar.gz`，即可同时获得源码、空库 SQL、MIT 许可及部署/使用文档。仅需要部分文件时可下载独立附件；下载校验与解压步骤见 [部署指南](docs/DEPLOYMENT.md)。
+
 社区版目标环境为 Python 3.11–3.14、MySQL 8.0/8.4；Linux 生产部署流程见 [部署指南](docs/DEPLOYMENT.md)。首次公开发布已通过四个 Python 版本的回归测试和两种 MySQL 版本的集成测试，实际验证范围见 [审查记录](docs/REVIEW.md)。后续版本请查看上方 CI 状态。
 
 ```bash
@@ -77,10 +79,10 @@ node --check web/app.js
 node tests/frontend.cjs
 python scripts/check_release.py
 python -m pip_audit
-python scripts/build_release.py --version 20261115-r2
+python scripts/build_release.py --version 0.1.0
 ```
 
-构建结果位于 `dist/`，包含源码包、空库 SQL、社区整包和 SHA-256 校验文件。构建只采集允许的源码文件，拒绝私钥、运行配置及交付目录。
+构建结果位于 `dist/`，包含源码包、空库 SQL、独立部署指南、社区整包和 SHA-256 校验文件。整包解压后可直接阅读 `docs/DEPLOYMENT.md`，无需先解开源码包。构建只采集允许的源码文件，拒绝私钥、运行配置及交付目录。
 
 [使用手册](docs/USER_GUIDE.md) · [测试说明](docs/TESTING.md) · [审查记录](docs/REVIEW.md) · [GitHub 发布步骤](docs/PUBLISHING.md) · [贡献说明](CONTRIBUTING.md) · [安全说明](SECURITY.md)
 

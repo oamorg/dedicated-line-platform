@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -68,6 +69,13 @@ def test_release_payload_and_checksums(tmp_path):
                             cwd=project, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     out = project / 'dist'
+    assert {p.name for p in out.iterdir()} == {
+        'dedicated-line-community-source-test.tar.gz',
+        'dedicated-line-community-release-test.tar.gz',
+        'dedicated_line_empty.sql', 'DEPLOYMENT.md', 'SHA256SUMS.txt',
+    }
+    assert '/blob/vtest/docs/TESTING.md' in (out / 'DEPLOYMENT.md').read_text()
+    assert '(TESTING.md)' not in (out / 'DEPLOYMENT.md').read_text()
     first_build = {p.name: p.read_bytes() for p in out.iterdir()}
     subprocess.run([sys.executable, 'scripts/build_release.py', '--version', 'test'],
                    cwd=project, check=True, capture_output=True, timeout=30)
@@ -76,23 +84,39 @@ def test_release_payload_and_checksums(tmp_path):
         checksum, filename = entry.split('  ', 1)
         assert hashlib.sha256((out / filename).read_bytes()).hexdigest() == checksum
     with tarfile.open(out / 'dedicated-line-community-release-test.tar.gz') as archive:
+        names = set(archive.getnames())
+        assert 'README.md' in names
+        assert archive.extractfile('docs/DEPLOYMENT.md').read() == (project / 'docs/DEPLOYMENT.md').read_bytes()
+        assert 'Copyright (c) 2026 oamorg' in archive.extractfile('LICENSE').read().decode()
+        assert all(member.isfile() and not member.name.startswith('/') and '..' not in Path(member.name).parts
+                   for member in archive.getmembers())
+        checked = set()
         for entry in archive.extractfile('SHA256SUMS.txt').read().decode().splitlines():
             checksum, filename = entry.split('  ', 1)
             assert hashlib.sha256(archive.extractfile(filename).read()).hexdigest() == checksum
+            checked.add(filename)
+        assert checked == names - {'SHA256SUMS.txt'}
+        for name in names:
+            if not name.endswith('.md'):
+                continue
+            for link in re.findall(r'\[[^\]]*\]\(([^)]+)\)', archive.extractfile(name).read().decode()):
+                if '://' not in link and not link.startswith('#'):
+                    assert str(Path(name).parent / link.split('#')[0]) in names
         sql = archive.extractfile('db/dedicated_line_empty.sql').read().decode()
-        assert 'INSERT INTO auth_users' not in sql
-        assert 'INSERT INTO customer_line_records' not in sql
+        inserts = set(re.findall(r'INSERT\s+(?:IGNORE\s+)?INTO\s+([a-z_]+)', sql, re.I))
+        assert inserts == {'auth_permissions', 'auth_roles', 'auth_role_permissions'}
+        assert 'pbkdf2_sha256$' not in sql
     with tarfile.open(out / 'dedicated-line-community-source-test.tar.gz') as archive:
         names = set(archive.getnames())
         assert 'dedicated-line-platform/LICENSE' in names
         assert 'dedicated-line-platform/docs/TESTING.md' in names
         assert 'dedicated-line-platform/.github/workflows/ci.yml' in names
+        assert 'Copyright (c) 2026 oamorg' in archive.extractfile('dedicated-line-platform/LICENSE').read().decode()
         assert not any('/backups/' in name or name.endswith('/.env') for name in names)
         assert archive.getmember('dedicated-line-platform/deploy.sh').mode == 0o755
 
 
 def test_local_document_links_exist():
-    import re
     paths = list(ROOT.glob('*.md')) + list((ROOT / 'docs').glob('*.md'))
     for path in paths:
         for link in re.findall(r'\[[^\]]*\]\(([^)]+)\)', path.read_text()):
