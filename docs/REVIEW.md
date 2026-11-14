@@ -29,17 +29,17 @@
 
 测试有第三方弃用提示（Starlette 的 httpx 适配及 SQLite datetime 适配），本次未导致失败。依赖使用版本范围，重新安装后仍须重新运行审计。
 
-## 尚未执行与部署边界
+## 验证与部署边界
 
 - 本机没有 MySQL 服务或容器运行时，未执行真实 MySQL 建库、导入与恢复；本地数据库会话测试使用 SQLite。
-- 已提供 MySQL 8.0/8.4 初始化两次、Excel 演练/导入/去重、三角色登录/查询/详情/导出/退出测试，以及 Python 3.11–3.14 CI；尚未推送，因此 GitHub Actions 未运行。
+- GitHub CI 已完成 MySQL 8.0/8.4 初始化两次、Excel 演练/导入/去重、三角色登录/查询/详情/导出/退出测试，以及 Python 3.11–3.14 回归测试；运行记录见下方公开发布验证。
 - 本次未做浏览器视觉回归、并发负载测试或完整安全渗透测试。
 - 应用未内置登录限流，部署指南提供 Nginx 限流；导入并发控制不是跨进程任务锁，暂按串行导入操作。
 - ONU 密码及完整原始字段依照现有查询权限返回，没有字段级脱敏、区域隔离或 MFA。
 
-## GitHub 准备状态
+## GitHub 发布状态
 
-已准备 README、MIT LICENSE、SECURITY、CONTRIBUTING、部署/数据/发布说明、Actions、Dependabot 和可重复发布脚本。此目录可作为新的 GitHub 仓库根目录；未创建远程仓库、未提交或推送。
+README、MIT LICENSE、SECURITY、CONTRIBUTING、部署/数据/发布说明、Actions、Dependabot 和可重复发布脚本已推送到 [oamorg/dedicated-line-platform](https://github.com/oamorg/dedicated-line-platform)。使用独立源码仓库，未上传内部工作目录的历史记录和交付物。
 
 ## 第二轮复核（2026-11-15，r2）
 
@@ -51,4 +51,14 @@
 - 同一版本重复构建得到一致字节，gzip 与 tar 时间戳统一清零。
 - CI 增加两种 MySQL 版本矩阵；本机未运行 MySQL 或 GitHub CI，不将集成脚本已编写等同于已验收。
 
-发布附件以 `20261115-r2` 为准。
+本轮本地归档版本为 `20261115-r2`；它生成于首次 GitHub 推送之前，不包含后续发布状态说明。最新源码及文档以公开仓库为准。
+
+## 公开发布验证（2026-11-15）
+
+首次公开提交：`7b0d050`。GitHub Actions [运行 43642821184](https://github.com/oamorg/dedicated-line-platform/actions/runs/43642821184) 的 7 个任务全部通过：
+
+- Python 3.11、3.12、3.13、3.14：pytest、Node 前端检查、Bash 语法、暂存源码扫描与发布构建通过。
+- MySQL 8.0、8.4：临时数据库中的重复初始化、虚构 Excel 演练/导入/去重和鉴权接口流程通过；未连接生产数据库。
+- 依赖审计：`pip-audit` 通过，未发现当次安装依赖的已知漏洞。
+
+本地再次运行得到 33 项 pytest 通过，前端测试通过。以上结果不等同于生产部署、数据库备份恢复、浏览器视觉或负载验收。

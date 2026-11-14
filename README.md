@@ -1,5 +1,7 @@
 # 政企集客业务数据中心
 
+[![Community checks](https://github.com/oamorg/dedicated-line-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oamorg/dedicated-line-platform/actions/workflows/ci.yml)
+
 面向政企专线和 ONU 资源台账的 Excel 导入、条件查询、导出及后台管理系统。
 
 - 专线业务全量库：按来源切换字段，查询客户、产品号码、区域和开通时间。
@@ -18,9 +20,10 @@
 
 ## 快速部署
 
-社区版目标环境为 Python 3.11–3.14、MySQL 8.0/8.4；Linux 生产部署流程见 [部署指南](docs/DEPLOYMENT.md)。本机已验证 Python 3.14；其他 Python 版本和两种 MySQL 版本由 CI 配置覆盖，需以实际 CI 结果为准。
+社区版目标环境为 Python 3.11–3.14、MySQL 8.0/8.4；Linux 生产部署流程见 [部署指南](docs/DEPLOYMENT.md)。首次公开发布已通过四个 Python 版本的回归测试和两种 MySQL 版本的集成测试，实际验证范围见 [审查记录](docs/REVIEW.md)。后续版本请查看上方 CI 状态。
 
 ```bash
+git clone https://github.com/oamorg/dedicated-line-platform.git
 cd dedicated-line-platform
 python3 -m venv .venv
 source .venv/bin/activate

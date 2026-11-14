@@ -1,6 +1,8 @@
-# GitHub 发布准备
+# GitHub 发布说明
 
-建议仓库名 `dedicated-line-platform`，描述：政企专线与 ONU 台账导入、查询、统计及权限管理平台。MIT 版权主体保留 `hjie`。
+公开仓库：[oamorg/dedicated-line-platform](https://github.com/oamorg/dedicated-line-platform)，默认分支 `main`。描述：政企专线与 ONU 台账导入、查询、统计及权限管理平台。MIT 版权主体保留 `hjie`。
+
+2026-11-15 已完成首次推送及 [Community checks](https://github.com/oamorg/dedicated-line-platform/actions/runs/43642821184) 验证。以下建仓命令供发布独立副本参考；更新现有仓库请使用后面的同步步骤。
 
 将本源码目录作为仓库根目录，根目录应包含 README、LICENSE、app、web、sql、tests、.github。不要从内部工作目录执行 `git add .`，也不要上传旧交付整包、含数据数据库或 `.git` 历史。
 
@@ -21,7 +23,21 @@ git commit -m "Prepare MIT community release"
 gh repo create dedicated-line-platform --public --source=. --remote=origin --push
 ```
 
-同步前运行上述检查。此次准备未创建远程仓库、未提交或推送；账号与仓库归属由发布者的 Git/GitHub 配置决定。若目标仓库已经存在，添加该仓库的 origin 后再推送，不要重复创建。
+同步前运行上述检查，账号与仓库归属由发布者的 Git/GitHub 配置决定。若目标仓库已经存在，添加该仓库的 origin 后再推送，不要重复创建。更新现有仓库时，先确认当前分支和远程地址，再暂存需要发布的具体文件：
+
+```bash
+git status --short --branch
+git remote -v
+git add <本次修改的源码或文档文件>
+python scripts/check_release.py --tracked
+git diff --cached --check
+git diff --cached
+git commit -m "Describe the community update"
+git push origin HEAD:main
+gh run list --workflow ci.yml --branch main --limit 3
+```
+
+若使用 GitHub CLI 的 OAuth 登录且推送 `.github/workflows/ci.yml` 被拒绝，运行 `gh auth refresh -h github.com -s workflow`，由账号持有者完成设备授权后重试。不要把令牌放进源码或远程 URL，也不要删除 CI 文件来绕过权限检查。
 
 发布后检查 Actions 中的 Python、MySQL 与依赖审计结果。开启 Secret scanning / Push protection 和私密漏洞报告，并配置 main 分支保护。
 
