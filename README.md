@@ -86,4 +86,4 @@ python scripts/build_release.py --version 20261115-r2
 
 ## License
 
-采用 [MIT License](LICENSE)，Copyright (c) 2026 hjie。第三方依赖保留各自许可；MIT 不授权任何部署者的业务数据。
+采用 [MIT License](LICENSE)，Copyright (c) 2026 oamorg。第三方依赖保留各自许可；MIT 不授权任何部署者的业务数据。
