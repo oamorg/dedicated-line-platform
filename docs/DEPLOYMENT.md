@@ -1,13 +1,13 @@
 # 社区版部署指南
 
-**版本提示:** 当前 `main` 包含 v0.1.0 之后的安全修复、登录安全页和备份验证工具。旧 v0.1.0 附件不包含这些更新。本轮同步不覆盖旧 Release；部署前核对所选提交的 CI，不把源码同步等同于目标服务器已验收。
+**版本提示:** 本指南对应 v0.1.1，包含 v0.1.0 之后的安全修复、登录安全页和备份验证工具。旧 v0.1.0 附件不包含这些更新。发布包和 CI 通过不等同于目标服务器已验收。
 
-## 当前源码与历史附件
+## 源码修订与发布附件
 
-新部署优先选择通过 CI 的源码修订，在维护电脑下载并记录提交号：
+推荐直接使用下面的 v0.1.1 发布附件；需要 Git 源码时，在维护电脑检出同一标签并记录提交号：
 
 ```bash
-git clone https://github.com/oamorg/dedicated-line-platform.git
+git clone --branch v0.1.1 https://github.com/oamorg/dedicated-line-platform.git
 cd dedicated-line-platform
 git log -1 --format='%H %s'
 python3 scripts/check_release.py --tracked
@@ -15,16 +15,14 @@ python3 scripts/check_release.py --tracked
 
 若从仓库页面下载源码压缩包，应核对对应提交；`sql/01_schema.sql` 是空库结构与权限种子。不要混用旧附件的 SQL 和新源码。已有数据库应执行全部迁移，不能直接导入空库覆盖。
 
-下面下载步骤仅用于复核历史 v0.1.0 附件，不是推荐的新公网部署版本：
-
-在 [v0.1.0 发布页](https://github.com/oamorg/dedicated-line-platform/releases/tag/v0.1.0) 下载 `dedicated-line-community-release-0.1.0.tar.gz` 和 `SHA256SUMS.txt`，放到同一目录。发布页的 GitHub 自动生成 Source code 下载项仅含源码，不包含额外的空库 SQL 和整包文档目录；首次部署建议使用社区整包附件。
+在 [v0.1.1 发布页](https://github.com/oamorg/dedicated-line-platform/releases/tag/v0.1.1) 下载 `dedicated-line-community-release-0.1.1.tar.gz` 和 `SHA256SUMS.txt`，放到同一目录。GitHub 自动生成的 Source code 下载项仅含源码，不包含额外的空库 SQL 和整包文档目录；首次部署建议使用社区整包附件。独立的 `DEPLOYMENT.md` 和 `OPERATIONS.md` 分别为部署和运维指南。
 
 ```bash
 # 只下载整包时，选择清单中的对应条目校验。
-grep '  dedicated-line-community-release-0.1.0.tar.gz$' SHA256SUMS.txt | sha256sum -c -
-mkdir dedicated-line-release-0.1.0
-tar -xzf dedicated-line-community-release-0.1.0.tar.gz -C dedicated-line-release-0.1.0
-cd dedicated-line-release-0.1.0
+grep '  dedicated-line-community-release-0.1.1.tar.gz$' SHA256SUMS.txt | sha256sum -c -
+mkdir dedicated-line-release-0.1.1
+tar -xzf dedicated-line-community-release-0.1.1.tar.gz -C dedicated-line-release-0.1.1
+cd dedicated-line-release-0.1.1
 sha256sum -c SHA256SUMS.txt
 ```
 
@@ -40,10 +38,11 @@ sudo apt install -y python3-venv python3-pip mysql-server mysql-client nginx git
 id dedicated-line >/dev/null 2>&1 || sudo useradd --system --user-group --home /opt/dedicated-line --shell /usr/sbin/nologin dedicated-line
 # 以下为首次空环境部署，让当前维护用户先拥有源码安装目录。
 sudo install -d -o "$(id -un)" -g "$(id -gn)" /opt/dedicated-line
-# 替换为上述已核对的干净源码仓库路径，只复制已提交源码。
-set -o pipefail
-git -C /path/to/checked-source archive HEAD | tar -x -C /opt/dedicated-line
+# 替换为已校验整包内的源码附件路径；仅用于首次空目录安装。
+tar -xzf /path/to/dedicated-line-community-source-0.1.1.tar.gz --strip-components=1 -C /opt/dedicated-line
 ```
+
+若选择 Git 标签源码而非附件，用 `git -C /path/to/checked-source archive v0.1.1 | tar -x -C /opt/dedicated-line` 替代最后一行，并在 Bash 中先设置 `set -o pipefail`。两种方式二选一，不能覆盖已有业务安装目录。
 
 ## 数据库与配置
 

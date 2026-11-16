@@ -22,7 +22,9 @@
 
 ## 快速部署
 
-**当前 `main` 包含 v0.1.0 之后的安全修复；旧 v0.1.0 Release 附件不包含这些更新。** 本轮只同步源码，不替换旧附件或发布新标签。新部署请使用通过 CI 的当前源码修订，并记录提交号；已有库必须先备份，再按 [部署指南](docs/DEPLOYMENT.md) 升级。
+推荐下载 [v0.1.1 Release](https://github.com/oamorg/dedicated-line-platform/releases/tag/v0.1.1) 的 `dedicated-line-community-release-0.1.1.tar.gz`，包含社区源码、空库和完整文档；也可单独下载源码、空库、部署指南及运维指南。先按 [部署指南](docs/DEPLOYMENT.md) 核对 SHA-256，再安装。
+
+**旧 v0.1.0 附件不包含本次安全修复。** 已有库升级前必须备份并演练恢复，使用 v0.1.1 对应的全部迁移；不要将空库 SQL 覆盖到业务库。旧 Release 保持不变。
 
 社区版目标环境为 Python 3.11–3.14、MySQL 8.0/8.4；Linux 生产部署流程见 [部署指南](docs/DEPLOYMENT.md)。首次公开发布已通过四个 Python 版本的回归测试和两种 MySQL 版本的集成测试，实际验证范围见 [审查记录](docs/REVIEW.md)。后续版本请查看上方 CI 状态。
 
@@ -82,10 +84,10 @@ node tests/frontend.cjs
 node tests/frontend_security.cjs
 python scripts/check_release.py
 python -m pip_audit
-python scripts/build_release.py --version 0.1.0
+python scripts/build_release.py --version 0.1.1
 ```
 
-构建结果位于 `dist/`，包含源码包、空库 SQL、独立部署指南、社区整包和 SHA-256 校验文件。整包解压后可直接阅读 `docs/DEPLOYMENT.md`，无需先解开源码包。构建只采集允许的源码文件，拒绝私钥、运行配置及交付目录。
+构建结果位于 `dist/`，包含源码包、空库 SQL、独立部署和运维指南、社区整包和 SHA-256 校验文件。整包解压后可直接阅读 `docs/DEPLOYMENT.md`、`docs/OPERATIONS.md`，无需先解开源码包。构建只采集允许的源码文件，拒绝私钥、运行配置及交付目录。
 
 [部署指南](docs/DEPLOYMENT.md) · [系统架构](docs/ARCHITECTURE.md) · [运维与恢复](docs/OPERATIONS.md) · [使用手册](docs/USER_GUIDE.md) · [测试说明](docs/TESTING.md) · [公网验收清单](docs/PUBLIC_READINESS.md) · [审查记录](docs/REVIEW.md) · [GitHub 发布步骤](docs/PUBLISHING.md) · [贡献说明](CONTRIBUTING.md) · [安全说明](SECURITY.md)
 

@@ -2,7 +2,7 @@
 
 公开仓库：[oamorg/dedicated-line-platform](https://github.com/oamorg/dedicated-line-platform)，默认分支 `main`。描述：政企专线与 ONU 台账导入、查询、统计及权限管理平台。MIT 版权声明统一为 `Copyright (c) 2026 oamorg`。
 
-2026-11-16 本轮为源码更新，不自动发布新标签或修改 v0.1.0 附件。下文 v0.1.0 是历史发布示例；下一次正式发布必须使用新的版本号，并固定到完成 CI 的提交，不能用新内容覆盖旧标签或附件。
+2026-11-16 的 v0.1.1 发布在已同步安全修订的基础上，提供社区源码、空库、完整文档及独立部署/运维指南。Release 必须固定到完成 CI 的提交，先创建草稿、回下载验证，再公开；保留 v0.1.0 标签和附件不变。
 
 2026-11-15 已完成首次推送及 [Community checks](https://github.com/oamorg/dedicated-line-platform/actions/runs/43642821184) 验证。以下建仓命令供发布独立副本参考；更新现有仓库请使用后面的同步步骤。
 
@@ -48,19 +48,20 @@ Actions 用法参考官方仓库：[checkout](https://github.com/actions/checkou
 生成发布附件：
 
 ```bash
-python scripts/build_release.py --version 0.1.0
+python scripts/build_release.py --version 0.1.1
 cd dist
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
 整包内的校验清单只校验包内文件；外部清单额外校验整包本身，避免自校验循环。仅使用本次重新生成的社区发布文件。
 
-Release 应固定到通过 CI 的提交，以 `v0.1.0` 为标签。上传时明确列出五个附件，不使用包含历史产物的 `dist/*`：
+Release 应固定到通过 CI 的提交，以 `v0.1.1` 为标签。上传时明确列出六个附件，不使用包含历史产物的 `dist/*`：
 
-- `dedicated-line-community-release-0.1.0.tar.gz`：整包，含源码包、空库 SQL、完整文档、MIT 许可及包内校验清单。
-- `dedicated-line-community-source-0.1.0.tar.gz`：独立源码包。
+- `dedicated-line-community-release-0.1.1.tar.gz`：整包，含源码包、空库 SQL、完整文档、MIT 许可及包内校验清单。
+- `dedicated-line-community-source-0.1.1.tar.gz`：独立源码包。
 - `dedicated_line_empty.sql`：仅结构、角色和权限，不含账号、会话或业务记录。
 - `DEPLOYMENT.md`：可独立阅读的部署指南。
-- `SHA256SUMS.txt`：上述四个文件的 SHA-256 校验值。
+- `OPERATIONS.md`：可独立阅读的运维、备份、恢复和迁移指南。
+- `SHA256SUMS.txt`：上述五个文件的 SHA-256 校验值。
 
 建议先创建草稿，回下载附件验证校验值、源码与标签一致后再公开。发布说明中列明环境、无默认管理员、真实数据排除范围和 CI 链接。不要上传内部备份或将已有 Release 附件静默替换。

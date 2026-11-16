@@ -69,7 +69,7 @@ GitHub CI 为 MySQL 8.0/8.4 各启一个临时容器，不需要配置生产 Sec
 python -m pip check
 python -m pip_audit
 python scripts/check_release.py
-python scripts/build_release.py --version 0.1.0
+python scripts/build_release.py --version 0.1.1
 cd dist
 shasum -a 256 -c SHA256SUMS.txt
 ```

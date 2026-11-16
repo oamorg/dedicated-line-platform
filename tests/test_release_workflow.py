@@ -73,7 +73,7 @@ def test_release_payload_and_checksums(tmp_path):
     assert {p.name for p in out.iterdir()} == {
         'dedicated-line-community-source-test.tar.gz',
         'dedicated-line-community-release-test.tar.gz',
-        'dedicated_line_empty.sql', 'DEPLOYMENT.md', 'SHA256SUMS.txt',
+        'dedicated_line_empty.sql', 'DEPLOYMENT.md', 'OPERATIONS.md', 'SHA256SUMS.txt',
     }
     assert '/blob/vtest/docs/TESTING.md' in (out / 'DEPLOYMENT.md').read_text()
     assert '(TESTING.md)' not in (out / 'DEPLOYMENT.md').read_text()
@@ -81,6 +81,9 @@ def test_release_payload_and_checksums(tmp_path):
     assert '/blob/vtest/docs/OPERATIONS.md' in guide
     assert '/blob/vtest/docs/PUBLIC_READINESS.md' in guide
     assert not re.findall(r'\]\((?!https?://)[^)]*\.md(?:#[^)]*)?\)', guide)
+    operations = (out / 'OPERATIONS.md').read_text()
+    assert '/blob/vtest/docs/DEPLOYMENT.md' in operations
+    assert not re.findall(r'\]\((?!https?://)[^)]*\.md(?:#[^)]*)?\)', operations)
     first_build = {p.name: p.read_bytes() for p in out.iterdir()}
     subprocess.run([sys.executable, 'scripts/build_release.py', '--version', 'test'],
                    cwd=project, check=True, capture_output=True, timeout=30)

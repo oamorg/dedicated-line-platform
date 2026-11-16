@@ -40,14 +40,17 @@ def main():
     archive(source, [(f'dedicated-line-platform/{p.relative_to(ROOT)}', p.read_bytes(), 0o755 if p.name == 'deploy.sh' else 0o644) for p in files])
     empty = out / 'dedicated_line_empty.sql'
     empty.write_text('-- Empty community schema: no accounts or business rows.\nSET NAMES utf8mb4;\n' + (ROOT / 'sql/01_schema.sql').read_text(encoding='utf-8'), encoding='utf-8')
-    guide = out / 'DEPLOYMENT.md'
     tag = args.version if args.version.startswith('v') else 'v' + args.version
-    guide_text = (ROOT / 'docs/DEPLOYMENT.md').read_text(encoding='utf-8')
-    # The separately downloaded guide must not depend on sibling Markdown files.
-    guide_text = re.sub(r'\(([^()/]+\.md)(#[^)]*)?\)',
-        lambda match: f'(https://github.com/oamorg/dedicated-line-platform/blob/{tag}/docs/'
-                      f'{match[1]}{match[2] or ""})', guide_text)
-    guide.write_text(guide_text, encoding='utf-8')
+    guides = []
+    # Independently downloaded guides must not depend on sibling documents.
+    for document in ('DEPLOYMENT.md', 'OPERATIONS.md'):
+        guide = out / document
+        guide_text = (ROOT / 'docs' / document).read_text(encoding='utf-8')
+        guide_text = re.sub(r'\(([^()/]+\.md)(#[^)]*)?\)',
+            lambda match: f'(https://github.com/oamorg/dedicated-line-platform/blob/{tag}/docs/'
+                          f'{match[1]}{match[2] or ""})', guide_text)
+        guide.write_text(guide_text, encoding='utf-8')
+        guides.append(guide)
     readme = f'''# Community deployment bundle {args.version}
 
 Start with [the deployment guide](docs/DEPLOYMENT.md).
@@ -55,7 +58,7 @@ Requirements: Python 3.11-3.14 and MySQL 8.0 or 8.4.
 
 - `{source.name}`: complete MIT community source, tests and documentation.
 - `db/{empty.name}`: schema, roles and permissions; no accounts or business rows.
-- `docs/`: deployment, usage, data, testing and publishing guides.
+- `docs/`: deployment, operations, architecture, usage, data, testing and publishing guides.
 - `LICENSE`: Copyright (c) 2026 oamorg, MIT License.
 
 Verify the extracted bundle with `sha256sum -c SHA256SUMS.txt`
@@ -74,7 +77,7 @@ Do not import the empty schema over a production database without a backup.
     contents.append(('SHA256SUMS.txt', internal.encode(), 0o644))
     release = out / f'dedicated-line-community-release-{args.version}.tar.gz'
     archive(release, contents)
-    (out / 'SHA256SUMS.txt').write_text(''.join(f'{digest(path)}  {path.name}\n' for path in [source, empty, guide, release]), encoding='utf-8')
+    (out / 'SHA256SUMS.txt').write_text(''.join(f'{digest(path)}  {path.name}\n' for path in [source, empty, *guides, release]), encoding='utf-8')
     print(f'Community release built in {out}')
 
 
