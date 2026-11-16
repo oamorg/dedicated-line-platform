@@ -19,6 +19,26 @@ from scripts.manage_users import read_password, reset_password
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_login_security_filter_options_are_real_html_elements():
+    from html.parser import HTMLParser
+    class Options(HTMLParser):
+        active = False
+        values = None
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'select' and attrs.get('name') == 'action':
+                self.active = True
+                self.values = []
+            if tag == 'option' and self.active:
+                self.values.append(attrs.get('value'))
+        def handle_endtag(self, tag):
+            if tag == 'select':
+                self.active = False
+    parser = Options()
+    parser.feed((ROOT / 'web/index.html').read_text())
+    assert parser.values == ['all', 'auth.login_limited', 'auth.login_blocked', 'auth.login_failed']
+
+
 @pytest.fixture
 def client():
     app.dependency_overrides.clear()
@@ -80,20 +100,20 @@ def test_password_and_session_revocation():
     engine = create_engine('sqlite://')
     with Session(engine) as db:
         for sql in [
-            'CREATE TABLE auth_users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, password_hash TEXT, is_active INTEGER)',
+            'CREATE TABLE auth_users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, password_hash TEXT, is_active INTEGER, auth_version INTEGER DEFAULT 0)',
             'CREATE TABLE auth_roles (id INTEGER PRIMARY KEY, name TEXT)',
             'CREATE TABLE auth_permissions (id INTEGER PRIMARY KEY, code TEXT)',
             'CREATE TABLE auth_user_roles (user_id INTEGER, role_id INTEGER)',
             'CREATE TABLE auth_role_permissions (role_id INTEGER, permission_id INTEGER)',
-            'CREATE TABLE auth_sessions (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT, ip_address TEXT, user_agent TEXT, expires_at DATETIME, revoked_at DATETIME)',
+            'CREATE TABLE auth_sessions (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT, ip_address TEXT, user_agent TEXT, expires_at DATETIME, revoked_at DATETIME, auth_version INTEGER DEFAULT 0)',
         ]:
             db.execute(text(sql))
         hashed = hash_password('fictional-test-password')
         assert verify_password('fictional-test-password', hashed)
         assert not verify_password('wrong', hashed)
         assert hashed != hash_password('fictional-test-password')
-        db.execute(text('INSERT INTO auth_users VALUES (1, :name, :name, :hash, 1)'), {'name': 'demo', 'hash': hashed})
-        token, _ = create_session(db, 1)
+        db.execute(text('INSERT INTO auth_users VALUES (1, :name, :name, :hash, 1, 0)'), {'name': 'demo', 'hash': hashed})
+        token, _ = create_session(db, 1, expected_version=0)
         assert resolve_user_by_token(db, token)['username'] == 'demo'
         reset_password(db, 'demo', 'fictional-replacement-password')
         assert resolve_user_by_token(db, token) is None
@@ -110,6 +130,7 @@ def test_cli_password_prompt(monkeypatch):
 
 
 def test_import_log_path_is_independent_of_batch_name(tmp_path, monkeypatch):
+    monkeypatch.setenv('IMPORT_LOCK_FILE', str(tmp_path / '.import.lock'))
     log_dir = tmp_path / 'logs'
     monkeypatch.setattr(api, 'IMPORT_LOG_DIR', log_dir)
     monkeypatch.setattr(api, 'DEFAULT_IMPORT_DATA_DIR', tmp_path)

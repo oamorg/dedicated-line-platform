@@ -1,6 +1,7 @@
 """Exercise the documented release and deployment entry points without production data."""
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -76,6 +77,10 @@ def test_release_payload_and_checksums(tmp_path):
     }
     assert '/blob/vtest/docs/TESTING.md' in (out / 'DEPLOYMENT.md').read_text()
     assert '(TESTING.md)' not in (out / 'DEPLOYMENT.md').read_text()
+    guide = (out / 'DEPLOYMENT.md').read_text()
+    assert '/blob/vtest/docs/OPERATIONS.md' in guide
+    assert '/blob/vtest/docs/PUBLIC_READINESS.md' in guide
+    assert not re.findall(r'\]\((?!https?://)[^)]*\.md(?:#[^)]*)?\)', guide)
     first_build = {p.name: p.read_bytes() for p in out.iterdir()}
     subprocess.run([sys.executable, 'scripts/build_release.py', '--version', 'test'],
                    cwd=project, check=True, capture_output=True, timeout=30)
@@ -110,10 +115,30 @@ def test_release_payload_and_checksums(tmp_path):
         names = set(archive.getnames())
         assert 'dedicated-line-platform/LICENSE' in names
         assert 'dedicated-line-platform/docs/TESTING.md' in names
+        assert 'dedicated-line-platform/docs/OPERATIONS.md' in names
+        assert 'dedicated-line-platform/scripts/backup.py' in names
+        assert 'dedicated-line-platform/scripts/restore_verify.py' in names
+        assert 'dedicated-line-platform/config/backup.example.json' in names
         assert 'dedicated-line-platform/.github/workflows/ci.yml' in names
         assert 'Copyright (c) 2026 oamorg' in archive.extractfile('dedicated-line-platform/LICENSE').read().decode()
         assert not any('/backups/' in name or name.endswith('/.env') for name in names)
         assert archive.getmember('dedicated-line-platform/deploy.sh').mode == 0o755
+
+
+def test_backup_template_has_no_embedded_credentials():
+    config = json.loads((ROOT / 'config/backup.example.json').read_text())
+    assert set(config) == {'app_dir', 'database', 'backup_root', 'state_dir', 'runtime_dir',
+                           'min_free_bytes', 'max_age_hours', 'config_paths'}
+    assert all(Path(config[key]).is_absolute() for key in ('app_dir', 'backup_root', 'state_dir', 'runtime_dir'))
+    assert config['database'] == 'dedicated_line'
+    assert config['min_free_bytes'] > 0 and config['max_age_hours'] > 0
+
+
+@pytest.mark.parametrize('name', ['backup.py', 'restore_verify.py'])
+def test_backup_cli_help_without_deployment_config(name):
+    result = subprocess.run([sys.executable, str(ROOT / 'scripts' / name), '--help'],
+                            cwd=ROOT, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0 and 'usage:' in result.stdout
 
 
 def test_local_document_links_exist():

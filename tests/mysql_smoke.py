@@ -81,7 +81,7 @@ def main():
         run_script('build_release.py', '--version', 'mysql-check')
         run_script('init_db.py', str(ROOT / 'dist/dedicated_line_empty.sql'))
         with engine.connect() as conn:
-            for table in ['auth_users', 'auth_user_roles', 'auth_sessions', 'admin_operation_logs',
+            for table in ['auth_users', 'auth_user_roles', 'auth_sessions', 'auth_login_limits', 'auth_login_rules', 'auth_ip_blocks', 'admin_operation_logs',
                           'customer_line_records', 'onu_inventory', 'import_batches', 'import_errors']:
                 assert conn.execute(text(f'SELECT COUNT(*) FROM {table}')).scalar_one() == 0
         for _ in range(2):

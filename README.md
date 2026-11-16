@@ -9,6 +9,8 @@
 - 统计分析：集中展示 KPI 和区域规模排行。
 - 数据管理：演练/正式导入、批次追踪、错误与操作日志。
 - 用户管理：角色、启停、改密、删除、会话查询和强制下线。
+- 登录安全：共享限流规则、拒绝记录、临时封禁及解封 IP，管理操作审计。
+- 运维工具：备份完整性校验、独立实例恢复验证和本地失败告警；需按指南配置。
 
 后端为 FastAPI / SQLAlchemy / MySQL，前端使用原生 HTML、CSS 和 JavaScript。
 
@@ -20,7 +22,7 @@
 
 ## 快速部署
 
-在 [GitHub Releases](https://github.com/oamorg/dedicated-line-platform/releases) 下载 `dedicated-line-community-release-0.1.0.tar.gz`，即可同时获得源码、空库 SQL、MIT 许可及部署/使用文档。仅需要部分文件时可下载独立附件；下载校验与解压步骤见 [部署指南](docs/DEPLOYMENT.md)。
+**当前 `main` 包含 v0.1.0 之后的安全修复；旧 v0.1.0 Release 附件不包含这些更新。** 本轮只同步源码，不替换旧附件或发布新标签。新部署请使用通过 CI 的当前源码修订，并记录提交号；已有库必须先备份，再按 [部署指南](docs/DEPLOYMENT.md) 升级。
 
 社区版目标环境为 Python 3.11–3.14、MySQL 8.0/8.4；Linux 生产部署流程见 [部署指南](docs/DEPLOYMENT.md)。首次公开发布已通过四个 Python 版本的回归测试和两种 MySQL 版本的集成测试，实际验证范围见 [审查记录](docs/REVIEW.md)。后续版本请查看上方 CI 状态。
 
@@ -64,7 +66,7 @@ python scripts/import_excel.py --data-dir ./data/excel --batch-name initial_impo
 | --- | --- |
 | viewer | 查询及查看完整原始数据 |
 | exporter | 查询及导出 |
-| admin | 查询、导出、数据和用户管理 |
+| admin | 查询、导出、数据和用户管理、登录安全 |
 
 `/?preview=1` 使用纯前端虚构样例；不登录真实账号、不写库、不替代业务接口鉴权。详情保留完整 `raw_data`；ONU 密码也是可查询字段，部署者需要控制账号授权。
 
@@ -77,6 +79,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 node --check web/app.js
 node tests/frontend.cjs
+node tests/frontend_security.cjs
 python scripts/check_release.py
 python -m pip_audit
 python scripts/build_release.py --version 0.1.0
@@ -84,7 +87,7 @@ python scripts/build_release.py --version 0.1.0
 
 构建结果位于 `dist/`，包含源码包、空库 SQL、独立部署指南、社区整包和 SHA-256 校验文件。整包解压后可直接阅读 `docs/DEPLOYMENT.md`，无需先解开源码包。构建只采集允许的源码文件，拒绝私钥、运行配置及交付目录。
 
-[使用手册](docs/USER_GUIDE.md) · [测试说明](docs/TESTING.md) · [审查记录](docs/REVIEW.md) · [GitHub 发布步骤](docs/PUBLISHING.md) · [贡献说明](CONTRIBUTING.md) · [安全说明](SECURITY.md)
+[部署指南](docs/DEPLOYMENT.md) · [系统架构](docs/ARCHITECTURE.md) · [运维与恢复](docs/OPERATIONS.md) · [使用手册](docs/USER_GUIDE.md) · [测试说明](docs/TESTING.md) · [公网验收清单](docs/PUBLIC_READINESS.md) · [审查记录](docs/REVIEW.md) · [GitHub 发布步骤](docs/PUBLISHING.md) · [贡献说明](CONTRIBUTING.md) · [安全说明](SECURITY.md)
 
 ## License
 

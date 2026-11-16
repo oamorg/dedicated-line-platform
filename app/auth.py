@@ -102,22 +102,22 @@ def get_user_profile(db: Session, user_id: int) -> Optional[dict[str, Any]]:
 def authenticate_user(db: Session, username: str, password: str) -> Optional[dict[str, Any]]:
     sql = text(
         """
-        SELECT id, username, display_name, password_hash, is_active
+        SELECT id, username, display_name, password_hash, is_active, auth_version
         FROM auth_users
         WHERE username = :username
         LIMIT 1
         """
     )
     row = db.execute(sql, {"username": username}).mappings().first()
-    if not row:
-        return None
-    if int(row["is_active"]) != 1:
-        return None
-    if not verify_password(password, str(row["password_hash"])):
+    valid = verify_password(password, str(row["password_hash"]) if row else DUMMY_PASSWORD_HASH)
+    if not row or not valid or int(row["is_active"]) != 1:
         return None
 
     user_id = int(row["id"])
-    return get_user_profile(db, user_id)
+    profile = get_user_profile(db, user_id)
+    if profile:
+        profile["_auth_version"] = int(row["auth_version"])
+    return profile
 
 
 def create_session(
@@ -125,6 +125,8 @@ def create_session(
     user_id: int,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    *,
+    expected_version: int,
 ) -> tuple[str, datetime]:
     now = datetime.now()
     db.execute(text("DELETE FROM auth_sessions WHERE expires_at <= :now"), {"now": now})
@@ -134,11 +136,12 @@ def create_session(
     expires_at = now + timedelta(hours=SESSION_TTL_HOURS)
     sql = text(
         """
-        INSERT INTO auth_sessions (user_id, token_hash, ip_address, user_agent, expires_at)
-        VALUES (:user_id, :token_hash, :ip_address, :user_agent, :expires_at)
+        INSERT INTO auth_sessions (user_id, token_hash, ip_address, user_agent, expires_at, auth_version)
+        SELECT id, :token_hash, :ip_address, :user_agent, :expires_at, :auth_version
+        FROM auth_users WHERE id = :user_id AND is_active = 1 AND auth_version = :auth_version
         """
     )
-    db.execute(
+    result = db.execute(
         sql,
         {
             "user_id": user_id,
@@ -146,8 +149,11 @@ def create_session(
             "ip_address": ip_address,
             "user_agent": user_agent,
             "expires_at": expires_at,
+            "auth_version": expected_version,
         },
     )
+    if result.rowcount != 1:
+        raise HTTPException(status_code=401, detail="认证状态已变化，请重新登录")
     return raw_token, expires_at
 
 
@@ -182,6 +188,8 @@ def revoke_session_by_id(db: Session, session_id: int) -> int:
 
 
 def revoke_sessions_for_user(db: Session, user_id: int, exclude_session_id: Optional[int] = None) -> int:
+    # Increment before revocation to fence logins validated against an older password/session epoch.
+    db.execute(text("UPDATE auth_users SET auth_version = auth_version + 1 WHERE id = :id"), {"id": user_id})
     sql = """
         UPDATE auth_sessions
         SET revoked_at = :now
@@ -197,6 +205,11 @@ def revoke_sessions_for_user(db: Session, user_id: int, exclude_session_id: Opti
         params["exclude_session_id"] = exclude_session_id
 
     result = db.execute(text(sql), params)
+    if exclude_session_id is not None:
+        db.execute(text("""
+            UPDATE auth_sessions SET auth_version = (SELECT auth_version FROM auth_users WHERE id = :id)
+            WHERE id = :session_id AND user_id = :id AND revoked_at IS NULL
+        """), {"id": user_id, "session_id": exclude_session_id})
     return int(result.rowcount or 0)
 
 
@@ -205,11 +218,12 @@ def resolve_user_by_token(db: Session, raw_token: str) -> Optional[dict[str, Any
     now = datetime.now()
     sql = text(
         """
-        SELECT id, user_id, expires_at
-        FROM auth_sessions
-        WHERE token_hash = :token_hash
-          AND revoked_at IS NULL
-          AND expires_at > :now
+        SELECT s.id, s.user_id, s.expires_at
+        FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id
+        WHERE s.token_hash = :token_hash
+          AND s.revoked_at IS NULL
+          AND s.expires_at > :now
+          AND s.auth_version = u.auth_version
         LIMIT 1
         """
     )
@@ -254,3 +268,6 @@ def require_permission(permission_code: str):
         return current_user
 
     return checker
+
+
+DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))

@@ -41,5 +41,8 @@ vm.runInContext(source.slice(source.indexOf('async function requestJSON('), sour
   assert.equal(result.user.username, 'admin');
   await assert.rejects(context.requestJSON('/api/unknown'), /预览模式不访问真实接口/);
   await context.requestJSON('/api/admin/import/run', {method: 'POST'});
+  const rules = await context.requestJSON('/api/admin/login-security/rules');
+  assert.equal(rules.rules.account_limit, 10);
+  await assert.rejects(context.requestJSON('/api/admin/login-security/rules', {method: 'PUT'}), /离线演示不修改/);
   console.log('CSV round-trip cases and preview isolation passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

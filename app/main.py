@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import secrets
 import subprocess
 import sys
 from datetime import date, datetime, time
+from time import time as epoch_time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -28,6 +31,9 @@ from app.auth import (
     revoke_sessions_for_user,
 )
 from app.db import get_db
+from app.security import (client_ip, user_agent, reserve_login_attempt, login_rules,
+                          blocked_login_retry, normalize_ip, ip_bucket_key)
+from app.import_lock import import_lock, ImportBusy
 
 app = FastAPI(
     title="政企集客业务数据中心 API",
@@ -45,6 +51,17 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 require_query_permission = require_permission("data.query")
 require_export_permission = require_permission("data.export")
 require_admin_permission = require_permission("user.manage")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
 
 
 class LoginPayload(BaseModel):
@@ -79,6 +96,45 @@ class AdminSessionRevokePayload(BaseModel):
     reason: Optional[str] = Field(None, max_length=255)
 
 
+class LoginRulesPayload(BaseModel):
+    window_seconds: int = Field(ge=60, le=3600, strict=True)
+    account_limit: int = Field(ge=3, le=100, strict=True)
+    ip_limit: int = Field(ge=10, le=1000, strict=True)
+    version: int = Field(ge=0, strict=True)
+
+    @model_validator(mode='after')
+    def compatible_limits(self):
+        if self.ip_limit < self.account_limit:
+            raise ValueError('IP limit must not be lower than account limit')
+        return self
+
+
+class IPActionPayload(BaseModel):
+    ip_address: str = Field(min_length=2, max_length=64)
+    reason: str = Field(min_length=1, max_length=255)
+
+    @field_validator('ip_address')
+    @classmethod
+    def valid_ip(cls, value):
+        return normalize_ip(value)
+
+    @field_validator('reason')
+    @classmethod
+    def valid_reason(cls, value):
+        value = value.strip()
+        if not value or any(ord(char) < 32 for char in value):
+            raise ValueError('A nonblank reason without control characters is required')
+        return value
+
+
+class IPBlockPayload(IPActionPayload):
+    duration_minutes: int = Field(ge=1, le=10080, strict=True)
+
+
+class IPReleasePayload(IPActionPayload):
+    revision: str = Field(pattern=r'^[0-9a-f]{32}$')
+
+
 def _row_to_dict(row: Any) -> dict[str, Any]:
     data = dict(row)
     raw = data.get("raw_data")
@@ -97,14 +153,11 @@ def _split_csv(value: Any) -> list[str]:
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    return client_ip(request)
 
 
 def _request_user_agent(request: Request) -> str:
-    return request.headers.get("user-agent", "").strip()
+    return user_agent(request)
 
 
 def _serialize_admin_user(row: Any) -> dict[str, Any]:
@@ -334,20 +387,7 @@ def _get_admin_user(db: Session, user_id: int) -> Optional[dict[str, Any]]:
 
 
 def _revoke_user_sessions(db: Session, user_id: int) -> None:
-    db.execute(
-        text(
-            """
-            UPDATE auth_sessions
-            SET revoked_at = :revoked_at
-            WHERE user_id = :user_id
-              AND revoked_at IS NULL
-            """
-        ),
-        {
-            "user_id": user_id,
-            "revoked_at": datetime.now(),
-        },
-    )
+    revoke_sessions_for_user(db, user_id)
 
 
 def _log_admin_action(
@@ -359,6 +399,7 @@ def _log_admin_action(
     target_id: Optional[int],
     target_label: Optional[str],
     detail: Optional[dict[str, Any]] = None,
+    outcome: str = "SUCCESS",
 ) -> None:
     db.execute(
         text(
@@ -368,13 +409,13 @@ def _log_admin_action(
               target_label, status, detail_json, ip_address, user_agent
             ) VALUES (
               :actor_user_id, :actor_username, :action_code, :target_type, :target_id,
-              :target_label, 'SUCCESS', :detail_json, :ip_address, :user_agent
+              :target_label, :status, :detail_json, :ip_address, :user_agent
             )
             """
         ),
         {
-            "actor_user_id": int(actor["id"]),
-            "actor_username": actor["username"],
+            "actor_user_id": actor.get("id"),
+            "actor_username": actor.get("username"),
             "action_code": action_code,
             "target_type": target_type,
             "target_id": target_id,
@@ -382,6 +423,7 @@ def _log_admin_action(
             "detail_json": json.dumps(detail or {}, ensure_ascii=False),
             "ip_address": _client_ip(request),
             "user_agent": _request_user_agent(request),
+            "status": outcome,
         },
     )
 
@@ -442,8 +484,23 @@ def serve_home() -> FileResponse:
 
 @app.post("/api/auth/login")
 def login(payload: LoginPayload, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    ip = _client_ip(request)
+    retry = blocked_login_retry(db, ip)
+    if retry:
+        _log_admin_action(db, {}, request, 'auth.login_blocked', 'auth_user', None, payload.username.strip(),
+                          {'dimension': 'manual_ip', 'retry_after': retry}, outcome='DENIED')
+        db.commit()
+        raise HTTPException(status_code=429, detail='当前来源暂时无法登录，请稍后重试或联系管理员', headers={'Retry-After': str(retry)})
+    limit_detail = {}
+    retry = reserve_login_attempt(db, payload.username.strip(), ip, details=limit_detail)
+    if retry:
+        _log_admin_action(db, {}, request, "auth.login_limited", "auth_user", None, payload.username.strip(), limit_detail, outcome="DENIED")
+        db.commit()
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后重试", headers={"Retry-After": str(retry)})
     user = authenticate_user(db, payload.username.strip(), payload.password)
     if not user:
+        _log_admin_action(db, {}, request, "auth.login_failed", "auth_user", None, payload.username.strip(), outcome="FAILED")
+        db.commit()
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token, expires_at = create_session(
@@ -451,7 +508,9 @@ def login(payload: LoginPayload, request: Request, db: Session = Depends(get_db)
         int(user["id"]),
         _client_ip(request),
         _request_user_agent(request),
+        expected_version=user.pop("_auth_version"),
     )
+    _log_admin_action(db, user, request, "auth.login", "auth_user", int(user["id"]), user["username"])
     db.commit()
     return {
         "access_token": token,
@@ -563,8 +622,6 @@ def create_admin_user(
         text("INSERT INTO auth_user_roles (user_id, role_id) VALUES (:user_id, :role_id)"),
         {"user_id": user_id, "role_id": role_id},
     )
-    db.commit()
-
     user = _get_admin_user(db, user_id)
     if not user:
         raise HTTPException(status_code=500, detail="用户创建后查询失败")
@@ -650,7 +707,6 @@ def update_admin_user(
         if not payload.is_active:
             _revoke_user_sessions(db, user_id)
 
-    db.commit()
     user = _get_admin_user(db, user_id)
     if not user:
         raise HTTPException(status_code=500, detail="用户更新后查询失败")
@@ -665,7 +721,7 @@ def update_admin_user(
             user["username"],
             changes,
         )
-        db.commit()
+    db.commit()
     return {"user": user}
 
 
@@ -695,7 +751,6 @@ def reset_admin_user_password(
         },
     )
     _revoke_user_sessions(db, user_id)
-    db.commit()
     _log_admin_action(
         db,
         current_user,
@@ -729,7 +784,6 @@ def delete_admin_user(
 
     active_sessions = int(target.get("active_sessions") or 0)
     db.execute(text("DELETE FROM auth_users WHERE id = :user_id"), {"user_id": user_id})
-    db.commit()
     _log_admin_action(
         db,
         current_user,
@@ -833,8 +887,8 @@ def revoke_admin_session(
         raise HTTPException(status_code=404, detail="会话不存在")
 
     affected = revoke_session_by_id(db, session_id)
-    db.commit()
     if affected == 0:
+        db.commit()
         return {"message": "ok", "revoked": 0}
 
     _log_admin_action(
@@ -872,7 +926,6 @@ def revoke_admin_user_sessions(
         exclude_session_id = int(current_user.get("session_id") or 0) or None
 
     affected = revoke_sessions_for_user(db, user_id, exclude_session_id=exclude_session_id)
-    db.commit()
     _log_admin_action(
         db,
         current_user,
@@ -923,6 +976,135 @@ def list_admin_logs(
     )
     rows = db.execute(sql, params).mappings().all()
     return {"items": [_serialize_admin_log(row) for row in rows]}
+
+
+@app.get('/api/admin/login-security/rules')
+def get_login_rules(request: Request, db: Session = Depends(get_db),
+                    current_user: dict[str, Any] = Depends(require_admin_permission)):
+    return {'rules': login_rules(db), 'client_ip': _client_ip(request), 'server_time': int(epoch_time())}
+
+
+@app.put('/api/admin/login-security/rules')
+def update_login_rules(payload: LoginRulesPayload, request: Request, db: Session = Depends(get_db),
+                       current_user: dict[str, Any] = Depends(require_admin_permission)):
+    before = login_rules(db)
+    values = {**payload.model_dump(), 'updated_at': int(epoch_time())}
+    if payload.version == 0:
+        try:
+            db.execute(text('INSERT INTO auth_login_rules (id, window_seconds, account_limit, ip_limit, version, updated_at) '
+                            'VALUES (1, :window_seconds, :account_limit, :ip_limit, 1, :updated_at)'), values)
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, '规则已被其他管理员更新，请刷新后重试') from None
+    else:
+        result = db.execute(text('UPDATE auth_login_rules SET window_seconds=:window_seconds, '
+                                 'account_limit=:account_limit, ip_limit=:ip_limit, version=version+1, '
+                                 'updated_at=:updated_at WHERE id=1 AND version=:version'), values)
+        if result.rowcount != 1:
+            raise HTTPException(409, '规则已被其他管理员更新，请刷新后重试')
+    after = login_rules(db)
+    _log_admin_action(db, current_user, request, 'security.rules_updated', 'login_rules', 1, '登录限流规则',
+                      {'before': before, 'after': after})
+    db.commit()
+    return {'rules': after}
+
+
+def _security_ip_filter(value):
+    if not value:
+        return None
+    try:
+        return normalize_ip(value)
+    except ValueError:
+        raise HTTPException(422, '请输入单个有效的 IPv4 或 IPv6 地址') from None
+
+
+@app.get('/api/admin/login-security/events')
+def login_security_events(
+    action: Literal['all', 'auth.login_limited', 'auth.login_blocked', 'auth.login_failed'] = 'all',
+    ip_address: Optional[str] = Query(None, max_length=64),
+    username: Optional[str] = Query(None, max_length=64),
+    days: int = Query(7, ge=1, le=30), page: int = Query(1, ge=1, le=10000), size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db), current_user: dict[str, Any] = Depends(require_admin_permission),
+):
+    mysql = db.get_bind().dialect.name == 'mysql'
+    # Let the database resolve its timestamp timezone; browsers receive an epoch.
+    since_sql = 'FROM_UNIXTIME(:since)' if mysql else "datetime(:since, 'unixepoch')"
+    epoch_sql = 'UNIX_TIMESTAMP(created_at)' if mysql else "CAST(strftime('%s', created_at) AS INTEGER)"
+    conditions = ["action_code IN ('auth.login_limited','auth.login_blocked','auth.login_failed')", f'created_at>={since_sql}']
+    params = {'since': int(epoch_time()) - days * 86400, 'size': size, 'offset': (page - 1) * size}
+    if action != 'all':
+        conditions.append('action_code=:action')
+        params['action'] = action
+    ip = _security_ip_filter(ip_address)
+    if ip:
+        conditions.append('ip_address=:ip')
+        params['ip'] = ip
+    if username:
+        conditions.append('target_label=:username')
+        params['username'] = username.strip()
+    where = ' AND '.join(conditions)
+    total = db.execute(text(f'SELECT COUNT(*) FROM admin_operation_logs WHERE {where}'), params).scalar_one()
+    rows = db.execute(text(f'SELECT id, created_at, {epoch_sql} AS occurred_at, action_code, target_label, ip_address, detail_json '
+                           f'FROM admin_operation_logs WHERE {where} ORDER BY id DESC LIMIT :size OFFSET :offset'), params).mappings()
+    return {'items': [_serialize_admin_log(row) for row in rows], 'total': total, 'page': page, 'size': size}
+
+
+@app.get('/api/admin/login-security/ip-blocks')
+def list_login_ip_blocks(
+    ip_address: Optional[str] = Query(None, max_length=64),
+    page: int = Query(1, ge=1, le=10000), size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db), current_user: dict[str, Any] = Depends(require_admin_permission),
+):
+    now = int(epoch_time())
+    where = 'expires_at>:now'
+    params = {'now': now, 'size': size, 'offset': (page - 1) * size}
+    ip = _security_ip_filter(ip_address)
+    if ip:
+        where += ' AND ip_address=:ip'
+        params['ip'] = ip
+    total = db.execute(text(f'SELECT COUNT(*) FROM auth_ip_blocks WHERE {where}'), params).scalar_one()
+    rows = db.execute(text(f'SELECT * FROM auth_ip_blocks WHERE {where} '
+                           'ORDER BY blocked_at DESC, ip_address LIMIT :size OFFSET :offset'), params).mappings()
+    return {'items': [dict(row) for row in rows], 'total': total, 'page': page, 'size': size, 'server_time': now}
+
+
+@app.post('/api/admin/login-security/ip-blocks')
+def block_login_ip(payload: IPBlockPayload, request: Request, db: Session = Depends(get_db),
+                   current_user: dict[str, Any] = Depends(require_admin_permission)):
+    address = ipaddress.ip_address(payload.ip_address)
+    if address.is_loopback or address.is_unspecified or address.is_multicast or address.is_link_local:
+        raise HTTPException(400, '不允许封禁回环、未指定、组播或链路本地地址')
+    if payload.ip_address == _client_ip(request):
+        raise HTTPException(400, '不能封禁当前操作来源 IP，以免误锁管理员')
+    now = int(epoch_time())
+    values = {'ip': payload.ip_address, 'expires': now + payload.duration_minutes * 60,
+              'now': now, 'actor': current_user['id'], 'reason': payload.reason, 'revision': secrets.token_hex(16)}
+    if db.get_bind().dialect.name == 'mysql':
+        suffix = ('ON DUPLICATE KEY UPDATE expires_at=VALUES(expires_at), blocked_at=VALUES(blocked_at), '
+                  'blocked_by=VALUES(blocked_by), reason=VALUES(reason), revision=VALUES(revision)')
+    else:
+        suffix = ('ON CONFLICT(ip_address) DO UPDATE SET expires_at=excluded.expires_at, blocked_at=excluded.blocked_at, '
+                  'blocked_by=excluded.blocked_by, reason=excluded.reason, revision=excluded.revision')
+    db.execute(text('INSERT INTO auth_ip_blocks (ip_address, expires_at, blocked_at, blocked_by, reason, revision) '
+                    'VALUES (:ip, :expires, :now, :actor, :reason, :revision) ' + suffix), values)
+    _log_admin_action(db, current_user, request, 'security.ip_blocked', 'ip_address', None, payload.ip_address,
+                      {'reason': payload.reason, 'expires_at': values['expires'], 'duration_minutes': payload.duration_minutes})
+    db.commit()
+    return {'ip_address': payload.ip_address, 'expires_at': values['expires'], 'revision': values['revision']}
+
+
+@app.post('/api/admin/login-security/ip-blocks/release')
+def release_login_ip(payload: IPReleasePayload, request: Request, db: Session = Depends(get_db),
+                     current_user: dict[str, Any] = Depends(require_admin_permission)):
+    result = db.execute(text('DELETE FROM auth_ip_blocks WHERE ip_address=:ip AND revision=:revision'),
+                        {'ip': payload.ip_address, 'revision': payload.revision})
+    if result.rowcount != 1:
+        raise HTTPException(409, '封禁记录已变化或已解除，请刷新后重试')
+    db.execute(text('DELETE FROM auth_login_limits WHERE bucket_key=:key'), {'key': ip_bucket_key(payload.ip_address)})
+    _log_admin_action(db, current_user, request, 'security.ip_released', 'ip_address', None, payload.ip_address,
+                      {'reason': payload.reason, 'ip_budget_cleared': True, 'account_budget_cleared': False})
+    db.commit()
+    return {'message': 'ok', 'ip_budget_cleared': True}
 
 
 @app.get("/api/admin/data/summary")
@@ -1037,27 +1219,18 @@ def run_admin_import(
     db: Session = Depends(get_db),
     current_user: dict[str, Any] = Depends(require_admin_permission),
 ) -> dict[str, Any]:
+    try:
+        with import_lock() as lock_fd:
+            return _start_admin_import(payload, request, db, current_user, lock_fd)
+    except ImportBusy:
+        raise HTTPException(status_code=409, detail="已有导入进程运行中，请稍后重试") from None
+
+
+def _start_admin_import(payload, request, db, current_user, lock_fd):
     if not IMPORT_SCRIPT.exists():
         raise HTTPException(status_code=500, detail="导入脚本不存在")
     if not DEFAULT_IMPORT_DATA_DIR.exists():
         raise HTTPException(status_code=500, detail=f"导入目录不存在: {DEFAULT_IMPORT_DATA_DIR}")
-
-    running_batch = db.execute(
-        text(
-            """
-            SELECT id, batch_name, started_at
-            FROM import_batches
-            WHERE status = 'RUNNING'
-            ORDER BY id DESC
-            LIMIT 1
-            """
-        )
-    ).mappings().first()
-    if running_batch:
-        raise HTTPException(
-            status_code=409,
-            detail=f"已有导入任务运行中: batch#{running_batch['id']} {running_batch['batch_name']}",
-        )
 
     IMPORT_LOG_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1079,6 +1252,8 @@ def run_admin_import(
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env["DEDICATED_IMPORT_LOCK_FD"] = str(lock_fd)
+    env["DEDICATED_IMPORT_GATE"] = "1"
     with log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
@@ -1086,6 +1261,8 @@ def run_admin_import(
             stdout=log_file,
             stderr=subprocess.STDOUT,
             env=env,
+            stdin=subprocess.PIPE,
+            pass_fds=(lock_fd,),
             start_new_session=True,
         )
 
@@ -1097,23 +1274,20 @@ def run_admin_import(
         "log_file": str(log_path),
         "data_dir": str(DEFAULT_IMPORT_DATA_DIR),
     }
-    _log_admin_action(
-        db,
-        current_user,
-        request,
-        "import.run",
-        "import_batch",
-        None,
-        batch_name,
-        {
-            "dry_run": payload.dry_run,
-            "init_schema": payload.init_schema,
-            "pid": process.pid,
-            "log_file": str(log_path),
-            "data_dir": str(DEFAULT_IMPORT_DATA_DIR),
-        },
-    )
-    db.commit()
+    try:
+        _log_admin_action(db, current_user, request, "import.run", "import_batch", None, batch_name,
+                          {"dry_run": payload.dry_run, "init_schema": payload.init_schema, "pid": process.pid})
+        db.commit()
+        # No child database writes are permitted until the launch audit has committed.
+        process.stdin.write(b"1")
+        process.stdin.flush()
+    except BaseException:
+        db.rollback()
+        process.terminate()
+        process.wait(timeout=10)
+        raise
+    finally:
+        process.stdin.close()
     return result
 
 

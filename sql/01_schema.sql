@@ -164,9 +164,36 @@ CREATE TABLE IF NOT EXISTS auth_users (
   username VARCHAR(64) NOT NULL UNIQUE,
   display_name VARCHAR(128) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
+  auth_version BIGINT NOT NULL DEFAULT 0,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS auth_login_limits (
+  bucket_key CHAR(64) PRIMARY KEY,
+  attempts INT NOT NULL,
+  reset_at BIGINT NOT NULL,
+  INDEX idx_login_limits_expiry (reset_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS auth_login_rules (
+  id TINYINT PRIMARY KEY,
+  window_seconds INT NOT NULL,
+  account_limit INT NOT NULL,
+  ip_limit INT NOT NULL,
+  version BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS auth_ip_blocks (
+  ip_address VARCHAR(45) PRIMARY KEY,
+  expires_at BIGINT NOT NULL,
+  blocked_at BIGINT NOT NULL,
+  blocked_by BIGINT NULL,
+  reason VARCHAR(255) NOT NULL,
+  revision CHAR(32) NOT NULL,
+  INDEX idx_ip_blocks_expiry (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS auth_roles (
@@ -205,6 +232,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   user_id BIGINT NOT NULL,
   token_hash CHAR(64) NOT NULL UNIQUE,
+  auth_version BIGINT NOT NULL DEFAULT 0,
   ip_address VARCHAR(64) NULL,
   user_agent VARCHAR(255) NULL,
   expires_at DATETIME NOT NULL,

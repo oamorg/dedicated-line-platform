@@ -2,6 +2,8 @@
 
 公开仓库：[oamorg/dedicated-line-platform](https://github.com/oamorg/dedicated-line-platform)，默认分支 `main`。描述：政企专线与 ONU 台账导入、查询、统计及权限管理平台。MIT 版权声明统一为 `Copyright (c) 2026 oamorg`。
 
+2026-11-16 本轮为源码更新，不自动发布新标签或修改 v0.1.0 附件。下文 v0.1.0 是历史发布示例；下一次正式发布必须使用新的版本号，并固定到完成 CI 的提交，不能用新内容覆盖旧标签或附件。
+
 2026-11-15 已完成首次推送及 [Community checks](https://github.com/oamorg/dedicated-line-platform/actions/runs/43642821184) 验证。以下建仓命令供发布独立副本参考；更新现有仓库请使用后面的同步步骤。
 
 将本源码目录作为仓库根目录，根目录应包含 README、LICENSE、app、web、sql、tests、.github。不要从内部工作目录执行 `git add .`，也不要上传旧交付整包、含数据数据库或 `.git` 历史。

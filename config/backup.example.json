@@ -1,0 +1,19 @@
+{
+  "app_dir": "/opt/dedicated-line",
+  "database": "dedicated_line",
+  "backup_root": "/var/backups/dedicated-line",
+  "state_dir": "/var/lib/dedicated-line-backup",
+  "runtime_dir": "/run/dedicated-line-backup",
+  "min_free_bytes": 1073741824,
+  "max_age_hours": 30,
+  "config_paths": [
+    "/opt/dedicated-line/.env",
+    "/opt/dedicated-line/app",
+    "/opt/dedicated-line/web",
+    "/opt/dedicated-line/scripts",
+    "/opt/dedicated-line/sql",
+    "/opt/dedicated-line/config",
+    "/opt/dedicated-line/requirements.txt",
+    "/etc/dedicated-line-backup.json"
+  ]
+}

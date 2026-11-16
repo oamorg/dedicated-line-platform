@@ -621,6 +621,10 @@ const state = {
     filters: {},
   },
   batches: [],
+  security: {
+    rules: null, blocks: [], blockTotal: 0, blockPage: 1, blockFilters: {},
+    eventTotal: 0, eventPage: 1, eventFilters: {days: 7}, busy: false, fetchSeq: 0,
+  },
   admin: {
     roles: [],
     users: [],
@@ -635,6 +639,10 @@ const state = {
     user: null,
   },
 };
+
+const initialPrivateState = JSON.stringify(state);
+let sessionGeneration = 0;
+const pendingRequests = new Set();
 
 const els = {
   currentDate: document.getElementById("currentDate"),
@@ -709,9 +717,30 @@ const els = {
   drawerRaw: document.getElementById("drawerRaw"),
   drawerCloseBtn: document.getElementById("drawerCloseBtn"),
 
+  appShell: document.getElementById("appShell"),
   authGate: document.getElementById("authGate"),
   loginForm: document.getElementById("loginForm"),
   loginError: document.getElementById("loginError"),
+  securityRefreshBtn: document.getElementById("securityRefreshBtn"),
+  securityClientIp: document.getElementById("securityClientIp"),
+  securityStatus: document.getElementById("securityStatus"),
+  securityRuleVersion: document.getElementById("securityRuleVersion"),
+  securityRuleForm: document.getElementById("securityRuleForm"),
+  securityRuleSaveBtn: document.getElementById("securityRuleSaveBtn"),
+  securityBlockForm: document.getElementById("securityBlockForm"),
+  securityBlockSubmitBtn: document.getElementById("securityBlockSubmitBtn"),
+  securityBlockFilterForm: document.getElementById("securityBlockFilterForm"),
+  securityBlockBody: document.getElementById("securityBlockBody"),
+  securityBlockEmpty: document.getElementById("securityBlockEmpty"),
+  securityBlockPageInfo: document.getElementById("securityBlockPageInfo"),
+  securityBlockPrevBtn: document.getElementById("securityBlockPrevBtn"),
+  securityBlockNextBtn: document.getElementById("securityBlockNextBtn"),
+  securityEventFilterForm: document.getElementById("securityEventFilterForm"),
+  securityEventBody: document.getElementById("securityEventBody"),
+  securityEventEmpty: document.getElementById("securityEventEmpty"),
+  securityEventPageInfo: document.getElementById("securityEventPageInfo"),
+  securityEventPrevBtn: document.getElementById("securityEventPrevBtn"),
+  securityEventNextBtn: document.getElementById("securityEventNextBtn"),
 };
 
 function hasPermission(code) {
@@ -740,15 +769,40 @@ function saveToken(token) {
 }
 
 function setSession(token, user) {
+  resetPrivateData();
   saveToken(token);
   state.auth.user = user;
   updateAuthUI();
 }
 
-function clearSession() {
-  saveToken("");
+function clearSession(removeStoredToken = true) {
+  resetPrivateData();
+  if (removeStoredToken) saveToken("");
+  else state.auth.token = "";
   state.auth.user = null;
   updateAuthUI();
+}
+
+function resetPrivateData() {
+  sessionGeneration += 1;
+  pendingRequests.forEach((controller) => controller.abort());
+  pendingRequests.clear();
+  Object.assign(state, JSON.parse(initialPrivateState));
+  ["lineTableBody", "onuTableBody", "batchTableBody", "userTableBody", "sessionTableBody",
+    "adminLogTableBody", "importErrorTableBody", "drawerRaw", "drawerTitle", "areaBars",
+    "adminLineBreakdown", "adminOnuBreakdown", "adminLatestBatch", "sessionUserFilter",
+    "userCreateRole", "linePageInfo", "onuPageInfo", "userActionStatus", "adminImportStatus",
+    "adminImportDir", "kpiLines", "kpiOnu", "kpiAreaCount", "kpiBatchStatus", "adminLineTotal",
+    "adminOnuTotal", "adminUserTotal", "adminBatchTotal", "adminSessionTotal", "securityClientIp",
+    "securityStatus", "securityRuleVersion", "securityBlockBody", "securityEventBody",
+    "securityBlockPageInfo", "securityEventPageInfo"].forEach((key) => {
+      if (els[key]) els[key].textContent = "";
+    });
+  ["lineFilterForm", "onuFilterForm", "userCreateForm", "loginForm", "securityRuleForm",
+    "securityBlockForm", "securityBlockFilterForm", "securityEventFilterForm"].forEach((key) => els[key]?.reset());
+  els.securityRuleSaveBtn.disabled = true;
+  els.securityBlockSubmitBtn.disabled = false;
+  els.drawer?.classList.remove("open");
 }
 
 function updateAuthUI() {
@@ -760,6 +814,7 @@ function updateAuthUI() {
   } else {
     els.currentUser.textContent = "未登录";
     els.logoutBtn.classList.add("perm-hidden");
+    setProtectedUIVisible(false);
   }
 
   const canExport = hasPermission("data.export");
@@ -773,12 +828,24 @@ function updateAuthUI() {
   });
 }
 
+function setProtectedUIVisible(visible) {
+  [els.appShell, els.drawer].forEach((node) => {
+    node.hidden = !visible;
+    node.inert = !visible;
+  });
+}
+
 function showAuthGate(message = "") {
+  setProtectedUIVisible(false);
+  els.authGate.hidden = false;
   els.authGate.classList.add("open");
   els.loginError.textContent = message;
 }
 
 function hideAuthGate() {
+  if (!state.auth.token || !state.auth.user) return;
+  setProtectedUIVisible(true);
+  els.authGate.hidden = true;
   els.authGate.classList.remove("open");
   els.loginError.textContent = "";
 }
@@ -939,6 +1006,11 @@ async function requestJSON(path, options = {}) {
     if (path === "/api/admin/data/summary") return previewData.adminSummary;
     if (path === "/api/admin/import/errors") return { items: previewData.importErrors };
     if (path === "/api/admin/logs") return { items: previewData.adminLogs };
+    if (path.startsWith("/api/admin/login-security/")) {
+      if (method !== "GET") throw new Error("离线演示不修改登录安全规则，请在隔离测试服务操作");
+      if (path.endsWith("/rules")) return {rules: {window_seconds: 900, account_limit: 10, ip_limit: 60, version: 0}, client_ip: "192.0.2.1"};
+      return {items: [], total: 0};
+    }
     if (method !== "GET") return {};
     throw new Error("预览模式不访问真实接口");
   }
@@ -950,34 +1022,50 @@ async function requestJSON(path, options = {}) {
   if (body !== null) {
     headers["Content-Type"] = "application/json";
   }
-  if (auth && state.auth.token) {
-    headers.Authorization = `Bearer ${state.auth.token}`;
+  const token = options.token ?? state.auth.token;
+  if (auth && token) {
+    headers.Authorization = `Bearer ${token}`;
   }
-
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: body !== null ? JSON.stringify(body) : undefined,
-  });
-
-  if (!response.ok) {
-    let detail = "";
-    try {
-      const payload = await response.json();
-      detail = payload.detail || JSON.stringify(payload);
-    } catch {
-      detail = await response.text();
+  const generation = sessionGeneration;
+  const controller = new AbortController();
+  const assertCurrentSession = () => {
+    if (generation !== sessionGeneration) throw new DOMException("Stale session response", "AbortError");
+  };
+  pendingRequests.add(controller);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body !== null ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    assertCurrentSession();
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const payload = await response.json();
+        detail = payload.detail || JSON.stringify(payload);
+      } catch {
+        detail = await response.text();
+      }
+      assertCurrentSession();
+      if (auth && response.status === 401) {
+        clearSession();
+        showAuthGate("登录已失效，请重新登录");
+      }
+      const error = new Error(`HTTP ${response.status}: ${detail || path}`);
+      error.status = response.status;
+      error.retryAfter = Number(response.headers.get("Retry-After") || 0);
+      throw error;
     }
-
-    if (auth && response.status === 401) {
-      clearSession();
-      showAuthGate("登录已失效，请重新登录");
-    }
-    throw new Error(`HTTP ${response.status}: ${detail || path}`);
+    if (response.status === 204) return {};
+    const data = await response.json();
+    assertCurrentSession();
+    return data;
+  } finally {
+    pendingRequests.delete(controller);
   }
-
-  if (response.status === 204) return {};
-  return response.json();
 }
 
 function setTableEmpty(emptyEl, tbodyEl, isEmpty) {
@@ -1814,7 +1902,7 @@ async function revokeSessionById(sessionId, reason = "") {
 }
 
 async function switchModule(module) {
-  if ((module === "adminData" || module === "users") && !isAdmin()) {
+  if (["adminData", "users", "loginSecurity"].includes(module) && !isAdmin()) {
     module = "lines";
   }
 
@@ -1833,9 +1921,150 @@ async function switchModule(module) {
     if (module === "imports") await fetchBatches();
     if (module === "adminData") await refreshAdminDataModule();
     if (module === "users") await refreshAdminUsersModule();
+    if (module === "loginSecurity") await refreshLoginSecurity();
   } catch (error) {
     console.error(error);
     window.alert("模块数据加载失败，请稍后重试。");
+  }
+}
+
+function securityPager(kind, page, total) {
+  const prefix = `security${kind}`;
+  els[`${prefix}PageInfo`].textContent = `第 ${page} / ${Math.max(1, Math.ceil(total / 20))} 页，共 ${total} 条`;
+  els[`${prefix}PrevBtn`].disabled = page <= 1;
+  els[`${prefix}NextBtn`].disabled = page * 20 >= total;
+}
+
+async function refreshLoginSecurity() {
+  if (!isAdmin()) return;
+  const generation = sessionGeneration;
+  const sequence = ++state.security.fetchSeq;
+  const [settings, blocks, events] = await Promise.all([
+    requestJSON('/api/admin/login-security/rules'),
+    requestJSON('/api/admin/login-security/ip-blocks', {params: {...state.security.blockFilters, page: state.security.blockPage, size: 20}}),
+    requestJSON('/api/admin/login-security/events', {params: {...state.security.eventFilters, page: state.security.eventPage, size: 20}}),
+  ]);
+  if (generation !== sessionGeneration || sequence !== state.security.fetchSeq || !isAdmin()) return;
+  state.security.rules = settings.rules;
+  state.security.blocks = blocks.items;
+  state.security.blockTotal = blocks.total;
+  state.security.eventTotal = events.total;
+  els.securityClientIp.textContent = settings.client_ip;
+  els.securityRuleVersion.textContent = `版本 ${settings.rules.version}`;
+  for (const key of ['window_seconds', 'account_limit', 'ip_limit']) {
+    els.securityRuleForm.elements.namedItem(key).value = settings.rules[key];
+  }
+  els.securityRuleSaveBtn.disabled = PREVIEW_MODE;
+  els.securityBlockSubmitBtn.disabled = PREVIEW_MODE;
+  els.securityBlockBody.innerHTML = blocks.items.map(block => `<tr>
+    <td class="mono">${escapeHTML(block.ip_address)}</td>
+    <td>${escapeHTML(formatDate(block.blocked_at * 1000))}</td>
+    <td>${escapeHTML(formatDate(block.expires_at * 1000))}</td>
+    <td>${escapeHTML(block.reason)}</td>
+    <td><button class="btn btn-ghost" data-release-ip="${escapeHTML(block.ip_address)}">解封</button></td>
+  </tr>`).join('');
+  const eventNames = {'auth.login_limited': '自动限流', 'auth.login_blocked': 'IP 封禁拦截', 'auth.login_failed': '账号或密码错误'};
+  const dimensions = {account: '账号', ip: '来源 IP', manual_ip: '手动封禁 IP'};
+  els.securityEventBody.innerHTML = events.items.map(event => `<tr>
+    <td>${escapeHTML(formatDate(event.occurred_at * 1000))}</td><td>${escapeHTML(event.target_label || '-')}</td>
+    <td class="mono">${escapeHTML(event.ip_address || '-')}</td><td>${escapeHTML(eventNames[event.action_code] || event.action_code)}</td>
+    <td>${escapeHTML(dimensions[event.detail_json?.dimension] || '-')}</td>
+    <td>${event.detail_json?.retry_after ? `${escapeHTML(event.detail_json.retry_after)} 秒` : '-'}</td>
+  </tr>`).join('');
+  setTableEmpty(els.securityBlockEmpty, els.securityBlockBody, blocks.items.length === 0);
+  setTableEmpty(els.securityEventEmpty, els.securityEventBody, events.items.length === 0);
+  securityPager('Block', state.security.blockPage, blocks.total);
+  securityPager('Event', state.security.eventPage, events.total);
+  if (PREVIEW_MODE) setInlineStatus(els.securityStatus, '离线演示只读，不会修改服务器设置');
+}
+
+async function runSecurityAction(button, operation) {
+  if (!isAdmin() || state.security.busy) return;
+  const generation = sessionGeneration;
+  state.security.busy = true;
+  button.disabled = true;
+  let resultMessage = '';
+  setInlineStatus(els.securityStatus, '正在处理...');
+  try {
+    resultMessage = await operation();
+    if (generation !== sessionGeneration) return;
+    await refreshLoginSecurity();
+    if (generation === sessionGeneration) setInlineStatus(els.securityStatus, resultMessage);
+  } catch (error) {
+    if (generation !== sessionGeneration || error.name === 'AbortError') return;
+    setInlineStatus(els.securityStatus, resultMessage ? `${resultMessage}，但列表刷新失败，请重新刷新确认` : error.message, true);
+  } finally {
+    if (generation === sessionGeneration) {
+      state.security.busy = false;
+      button.disabled = PREVIEW_MODE;
+    }
+  }
+}
+
+function bindLoginSecurityEvents() {
+  const reload = async () => {
+    const generation = sessionGeneration;
+    try { await refreshLoginSecurity(); }
+    catch (error) {
+      if (generation === sessionGeneration && error.name !== 'AbortError') setInlineStatus(els.securityStatus, error.message, true);
+    }
+  };
+  els.securityRefreshBtn.addEventListener('click', reload);
+  els.securityRuleForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!state.security.rules || state.security.busy) return;
+    const form = new FormData(els.securityRuleForm);
+    const body = {version: state.security.rules.version};
+    for (const key of ['window_seconds', 'account_limit', 'ip_limit']) body[key] = Number(form.get(key));
+    if (body.ip_limit < body.account_limit) {
+      setInlineStatus(els.securityStatus, 'IP 上限不得小于账号上限', true);
+      return;
+    }
+    if (!window.confirm('确认更新登录规则？已有窗口和计数不会清零，修改将记录审计日志。')) return;
+    await runSecurityAction(els.securityRuleSaveBtn, async () => {
+      await requestJSON('/api/admin/login-security/rules', {method: 'PUT', body});
+      return '登录规则已保存，下一次登录开始采用新阈值';
+    });
+  });
+  els.securityBlockForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (state.security.busy) return;
+    const form = new FormData(els.securityBlockForm);
+    const body = {ip_address: String(form.get('ip_address')).trim(), duration_minutes: Number(form.get('duration_minutes')), reason: String(form.get('reason')).trim()};
+    if (!window.confirm(`确认禁止 ${body.ip_address} 新登录 ${body.duration_minutes} 分钟？共享该出口的用户都可能受到影响。`)) return;
+    const generation = sessionGeneration;
+    await runSecurityAction(els.securityBlockSubmitBtn, async () => {
+      await requestJSON('/api/admin/login-security/ip-blocks', {method: 'POST', body});
+      if (generation === sessionGeneration) {state.security.blockPage = 1; els.securityBlockForm.reset();}
+      return '临时封禁已生效，到期自动解除';
+    });
+  });
+  els.securityBlockBody.addEventListener('click', async event => {
+    const button = event.target.closest('[data-release-ip]');
+    if (!button || state.security.busy) return;
+    const block = state.security.blocks.find(item => item.ip_address === button.dataset.releaseIp);
+    if (!block) return;
+    const reason = window.prompt(`请输入解除 ${block.ip_address} 封禁的原因。解封会清除 IP 计数，但不清除账号限流。`, '');
+    if (reason === null) return;
+    if (!reason.trim()) {setInlineStatus(els.securityStatus, '解封原因不能为空', true); return;}
+    await runSecurityAction(button, async () => {
+      await requestJSON('/api/admin/login-security/ip-blocks/release', {method: 'POST', body: {ip_address: block.ip_address, revision: block.revision, reason: reason.trim()}});
+      return '已解除 IP 封禁并清除其计数；账号限流保持不变';
+    });
+  });
+  for (const [kind, prefix] of [['block', 'Block'], ['event', 'Event']]) {
+    els[`security${prefix}FilterForm`].addEventListener('submit', async event => {
+      event.preventDefault();
+      state.security[`${kind}Filters`] = Object.fromEntries(new FormData(event.currentTarget));
+      state.security[`${kind}Page`] = 1;
+      await reload();
+    });
+    for (const [name, delta] of [['Prev', -1], ['Next', 1]]) {
+      els[`security${prefix}${name}Btn`].addEventListener('click', async () => {
+        state.security[`${kind}Page`] = Math.max(1, state.security[`${kind}Page`] + delta);
+        await reload();
+      });
+    }
   }
 }
 
@@ -2232,7 +2461,7 @@ async function bootstrapAfterLogin() {
   }
   await refreshDashboard();
 
-  const nextModule = isAdmin() ? state.module : ["adminData", "users"].includes(state.module) ? "lines" : state.module;
+  const nextModule = isAdmin() ? state.module : ["adminData", "users", "loginSecurity"].includes(state.module) ? "lines" : state.module;
   await switchModule(nextModule);
 }
 
@@ -2256,6 +2485,7 @@ async function tryRestoreSession() {
     hideAuthGate();
     await bootstrapAfterLogin();
   } catch (error) {
+    if (error.name === "AbortError") return;
     console.error(error);
     clearSession();
     showAuthGate("登录已失效，请重新登录");
@@ -2286,18 +2516,25 @@ async function logout() {
     await switchModule(state.module || "lines");
     return;
   }
+  const token = state.auth.token;
+  clearSession();
+  showAuthGate("已退出登录");
   try {
-    if (state.auth.token) {
-      await requestJSON("/api/auth/logout", { method: "POST" });
+    if (token) {
+      await requestJSON("/api/auth/logout", { method: "POST", token });
     }
   } catch (error) {
     console.error(error);
   }
-  clearSession();
-  showAuthGate("已退出登录");
 }
 
 function bindAuthEvents() {
+  window.addEventListener("storage", (event) => {
+    if (!PREVIEW_MODE && (event.key === TOKEN_STORAGE_KEY || event.key === null)) {
+      clearSession(false);
+      showAuthGate("其他标签页登录状态已变化，请重新登录");
+    }
+  });
   els.loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(els.loginForm);
@@ -2314,8 +2551,11 @@ function bindAuthEvents() {
       await login(username, password);
       els.loginForm.reset();
     } catch (error) {
+      if (error.name === "AbortError") return;
       console.error(error);
-      els.loginError.textContent = "登录失败，请检查用户名或密码";
+      els.loginError.textContent = error.status === 429
+        ? `登录暂时受限，请约 ${Math.max(1, Math.ceil(error.retryAfter / 60))} 分钟后重试或联系管理员`
+        : "登录失败，请检查用户名或密码";
     }
   });
 
@@ -2350,6 +2590,7 @@ async function init() {
   bindUserEvents();
   bindDrawerEvents();
   bindAuthEvents();
+  bindLoginSecurityEvents();
   bindGlobalEvents();
 
   await tryRestoreSession();

@@ -5,6 +5,8 @@ import argparse
 import hashlib
 import json
 import os
+import sys
+from itertools import islice
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,11 @@ from dotenv import load_dotenv
 from openpyxl import load_workbook
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from app.import_lock import import_lock
 
 DEFAULT_FILE_SOURCE_TYPE: dict[str, str] = {
     "传输专线.xlsx": "传输专线",
@@ -270,28 +277,6 @@ def chunked(items: list[dict[str, Any]], chunk_size: int) -> list[list[dict[str,
     return [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
 
 
-def pick_sheet(file_name: str, workbook: Any) -> str:
-    hint = SHEET_HINTS.get(file_name)
-    sheet_names = list(workbook.sheetnames)
-    if hint and hint in sheet_names:
-        return hint
-
-    best_sheet = sheet_names[0]
-    best_score = -1
-    for sheet in sheet_names:
-        ws = workbook[sheet]
-        score = 0
-        for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-            row_score = sum(1 for value in row if clean_value(value) is not None)
-            score = max(score, row_score)
-            if idx >= 20:
-                break
-        if score > best_score:
-            best_score = score
-            best_sheet = sheet
-    return best_sheet
-
-
 def normalize_headers(header_row: tuple[Any, ...]) -> list[str]:
     headers: list[str] = []
     duplicates: dict[str, int] = {}
@@ -305,35 +290,47 @@ def normalize_headers(header_row: tuple[Any, ...]) -> list[str]:
 
 
 def load_sheet_rows(file_path: Path) -> tuple[list[tuple[int, dict[str, Any]]], str]:
+    if file_path.name not in FILE_SOURCE_TYPE and file_path.name not in ONU_FILE_NAMES:
+        raise ValueError(f"Unconfigured workbook: {file_path.name}; update config/source_files.json")
+    required = [{"客户名称"}, {"产品号码"}]
+    required += [{"ONUID", "SN码", "ONU名称"}] if file_path.name in ONU_FILE_NAMES else [{"区域"}]
+    config = json.loads((PROJECT_ROOT / "config/source_files.json").read_text(encoding="utf-8"))
+    entry = {**config.get("line_files", {}), **config.get("onu_files", {})}.get(file_path.name, {})
+    explicit = entry.get("header_row") if isinstance(entry, dict) else None
+    if explicit is not None and (type(explicit) is not int or explicit < 1):
+        raise ValueError("header_row must be a positive integer")
     workbook = load_workbook(file_path, read_only=True, data_only=True, keep_links=False)
-    sheet_name = pick_sheet(file_path.name, workbook)
-    ws = workbook[sheet_name]
-
-    preview_rows: list[tuple[Any, ...]] = []
-    header_row_number = 1
-    best_score = -1
-    for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        preview_rows.append(row)
-        score = sum(1 for value in row if clean_value(value) is not None)
-        if score > best_score:
-            best_score = score
-            header_row_number = idx
-        if idx >= 20:
-            break
-
-    if not preview_rows:
-        return [], sheet_name
-
-    headers = normalize_headers(preview_rows[header_row_number - 1])
-    rows: list[tuple[int, dict[str, Any]]] = []
-    for row_number, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        if row_number <= header_row_number:
-            continue
-        row_data = {headers[idx]: row[idx] if idx < len(row) else None for idx in range(len(headers))}
-        if any(clean_value(value) is not None for value in row_data.values()):
-            rows.append((row_number, row_data))
-
-    return rows, sheet_name
+    try:
+        hint = SHEET_HINTS.get(file_path.name)
+        sheets = [hint] if hint in workbook.sheetnames else workbook.sheetnames
+        candidates = []
+        for name in sheets:
+            for idx, row in enumerate(islice(workbook[name].iter_rows(values_only=True), explicit or 20), 1):
+                if explicit is not None and idx != explicit:
+                    continue
+                names = [clean_value(value) for value in row]
+                if all(set(names) & group for group in required):
+                    named = [value for value in names if value is not None]
+                    if len(named) != len(set(named)):
+                        raise ValueError(f"Duplicate header names: {file_path.name}, {name}, row {idx}")
+                    headers = normalize_headers(row)
+                    if len(headers) != len(set(headers)):
+                        raise ValueError("Generated unnamed columns conflict with named headers")
+                    candidates.append((name, idx, headers))
+        if len(candidates) != 1:
+            raise ValueError(f"Expected exactly one validated header in {file_path.name}, found {len(candidates)}; check required columns/header_row")
+        sheet_name, header_row_number, headers = candidates[0]
+        rows = []
+        for row_number, row in enumerate(workbook[sheet_name].iter_rows(values_only=True), 1):
+            if row_number <= header_row_number:
+                continue
+            row_data = {key: row[idx] if idx < len(row) else None for idx, key in enumerate(headers)}
+            if any(clean_value(value) is not None for value in row_data.values()):
+                rows.append((row_number, row_data))
+        print(f"[CHECK] {file_path.name}: sheet={sheet_name}, header_row={header_row_number}, columns={len(headers)}, rows={len(rows)}")
+        return rows, sheet_name
+    finally:
+        workbook.close()
 
 
 def apply_schema(engine: Engine) -> None:
@@ -664,7 +661,7 @@ def summarize_exception(exc: Exception) -> str:
     return message[:1000] if message else exc.__class__.__name__
 
 
-def main() -> None:
+def run_import() -> None:
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     parser = argparse.ArgumentParser(description="Import dedicated line excel files into MySQL.")
     parser.add_argument(
@@ -677,6 +674,8 @@ def main() -> None:
     parser.add_argument("--init-schema", action="store_true", help="Run sql/01_schema.sql before import")
     parser.add_argument("--dry-run", action="store_true", help="Validate without writing business rows; batch/error logs are recorded")
     args = parser.parse_args()
+    if args.chunk_size < 1:
+        parser.error("chunk-size must be positive")
 
     database_url = os.getenv(
         "DATABASE_URL",
@@ -694,7 +693,9 @@ def main() -> None:
         raise SystemExit(f"[ERROR] no .xlsx files found in: {data_dir}")
 
     batch_name = args.batch_name or f"excel_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    initial_status = "DRY_RUN" if args.dry_run else "RUNNING"
+    # The OS lock proves no other supported importer is alive on this deployment host.
+    recover_interrupted_batches(engine)
+    initial_status = "RUNNING"
     batch_id = create_batch(
         engine=engine,
         batch_name=batch_name,
@@ -710,6 +711,9 @@ def main() -> None:
     message = "ok"
 
     try:
+        # Validate every workbook before writing the first file's business rows.
+        for file_path in excel_files:
+            load_sheet_rows(file_path)
         for file_path in excel_files:
             print(f"[INFO] importing: {file_path.name}")
             with engine.begin() as conn:
@@ -762,6 +766,23 @@ def main() -> None:
             f"[INFO] batch finished: status={batch_status}, processed={rows_processed}, "
             f"affected={rows_affected}, failed={rows_failed}"
         )
+
+
+def recover_interrupted_batches(engine):
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE import_batches SET status = 'FAILED', finished_at = :now,
+              message = 'Importer interrupted; recovered under exclusive process lock'
+            WHERE status = 'RUNNING'
+        """), {"now": datetime.now()})
+
+
+def main():
+    load_dotenv(PROJECT_ROOT / ".env")
+    with import_lock(inherit=True):
+        if os.environ.pop("DEDICATED_IMPORT_GATE", "") == "1" and sys.stdin.buffer.read(1) != b"1":
+            raise SystemExit("Launch audit was not committed; import cancelled")
+        run_import()
 
 
 if __name__ == "__main__":

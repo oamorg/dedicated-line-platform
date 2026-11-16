@@ -44,8 +44,9 @@ def main():
     tag = args.version if args.version.startswith('v') else 'v' + args.version
     guide_text = (ROOT / 'docs/DEPLOYMENT.md').read_text(encoding='utf-8')
     # The separately downloaded guide must not depend on sibling Markdown files.
-    guide_text = guide_text.replace('(TESTING.md)',
-        f'(https://github.com/oamorg/dedicated-line-platform/blob/{tag}/docs/TESTING.md)')
+    guide_text = re.sub(r'\(([^()/]+\.md)(#[^)]*)?\)',
+        lambda match: f'(https://github.com/oamorg/dedicated-line-platform/blob/{tag}/docs/'
+                      f'{match[1]}{match[2] or ""})', guide_text)
     guide.write_text(guide_text, encoding='utf-8')
     readme = f'''# Community deployment bundle {args.version}
 

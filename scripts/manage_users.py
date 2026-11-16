@@ -5,6 +5,7 @@ import argparse
 from getpass import getpass
 import os
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -151,6 +152,7 @@ def main() -> None:
     p_reset.add_argument("--password", help="Omit for a hidden interactive prompt")
 
     subparsers.add_parser("list-users", help="List users")
+    subparsers.add_parser("prune-login-limits", help="Remove budgets and IP blocks expired for more than one day")
 
     args = parser.parse_args()
 
@@ -179,6 +181,11 @@ def main() -> None:
             print(f"password reset done: {args.username}")
         elif args.command == "list-users":
             list_users(conn)
+        elif args.command == "prune-login-limits":
+            result = conn.execute(text("DELETE FROM auth_login_limits WHERE reset_at < :cutoff"), {"cutoff": int(time.time()) - 86400})
+            print(f"removed expired login budgets: {result.rowcount}")
+            blocks = conn.execute(text("DELETE FROM auth_ip_blocks WHERE expires_at < :cutoff"), {"cutoff": int(time.time()) - 86400})
+            print(f"removed expired IP blocks: {blocks.rowcount}")
 
 
 if __name__ == "__main__":
